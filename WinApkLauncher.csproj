@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WPF is used only for its WIC image decoders (WebP icons when the codec is installed). -->
+    <UseWPF>true</UseWPF>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>WinApkLauncher</AssemblyName>
+    <RootNamespace>WinApkLauncher</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\WinApkLauncher.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!-- Product info. CI stamps the real version with -p:Version=<tag without v>. -->
+    <Product>WinApk Launcher</Product>
+    <AssemblyTitle>WinApk Launcher</AssemblyTitle>
+    <Description>Launcher and per-app settings manager for Win.apk (Android apps on Windows)</Description>
+    <Company>WinApk Launcher contributors</Company>
+    <Copyright>Copyright (C) 2026 WinApk Launcher contributors. AGPL-3.0.</Copyright>
+    <Version>0.0.0-dev</Version>
+    <!-- Keep the version clean ("0.1.0", not "0.1.0+<commit>"). -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- Reproducible output, and no local paths in the binaries: sources map to /_/, the PDB is
+         embedded in the dll. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)\=/_/</PathMap>
+    <DebugType>embedded</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+    <!-- UseWPF drops System.IO from the implicit usings (Path clash with WPF shapes); we don't use those. -->
+    <Using Include="System.IO" />
+    <!-- The window icon (all sizes); the exe icon comes from ApplicationIcon above. -->
+    <EmbeddedResource Include="assets\WinApkLauncher.ico" LogicalName="WinApkLauncher.ico" />
+  </ItemGroup>
+
+</Project>
