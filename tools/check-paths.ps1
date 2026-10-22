@@ -29,3 +29,4 @@ foreach ($f in $Files) {
 }
 if ($bad) { Write-Host "$bad local path(s) found"; exit 1 }
 Write-Host "no local paths in $($Files.Count) file(s)"
+exit 0

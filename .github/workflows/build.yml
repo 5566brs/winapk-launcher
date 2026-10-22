@@ -1,0 +1,24 @@
+# Compile check for every push and pull request: builds the launcher (Release, warnings are errors).
+# Releases are made by release.yml.
+name: Build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the launcher
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build WinApkLauncher.csproj -c Release -warnaserror -p:TreatWarningsAsErrors=true

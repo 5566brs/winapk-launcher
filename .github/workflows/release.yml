@@ -1,0 +1,252 @@
+# Publishes a WinApk Launcher release: builds the Win.apk runtime from source (the same steps as
+# Win.apk's own windows-release.yml, run in winapk/), publishes the launcher, makes the
+# installer and a portable zip, and attaches both to a GitHub release of THIS repository.
+#
+# The release notes name the exact runtime source (repository, commit, tree link). The bundled
+# runtime is AGPL-3.0, and that is how its source is made available.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v0.1.0 (a "-" in it makes a pre-release)'
+        required: true
+        default: 'v0.1.0'
+      runtime_repo:
+        description: 'Win.apk repository to build the bundled runtime from'
+        required: true
+        default: '5566brs/win.apk'
+      runtime_ref:
+        description: 'Branch, tag or commit of runtime_repo'
+        required: true
+        default: 'bundle/v0.1.0'
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag }}
+  RUNTIME_REPO: ${{ inputs.runtime_repo }}
+  RUNTIME_REF: ${{ inputs.runtime_ref }}
+  INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+  INNO_SHA256: 9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the inputs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "tag must look like v0.1.0, got '$env:TAG'" }
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) { throw "release $env:TAG already exists" }
+          "VERSION=$($env:TAG.Substring(1))" >> $env:GITHUB_ENV
+          exit 0  # gh's "not found" exit code must not fail the step
+
+      - name: Check out the Win.apk runtime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.runtime_repo }}
+          ref: ${{ inputs.runtime_ref }}
+          path: winapk
+
+      - name: Resolve the runtime commit
+        shell: pwsh
+        run: |
+          $sha = git -C winapk rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw "could not resolve the runtime commit" }
+          "RUNTIME_SHA=$sha" >> $env:GITHUB_ENV
+          Write-Host "runtime: $env:RUNTIME_REPO @ $env:RUNTIME_REF = $sha"
+
+      # ---- From here to the smoke test: Win.apk's windows-release.yml, in winapk/ ----
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: unzip zip
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+
+      - name: Build the runtime
+        working-directory: winapk
+        run: |
+          cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include"
+          cmake --build build
+
+      - uses: actions/cache@v4
+        with:
+          path: winapk/thirdparty/framework-res
+          key: framework-res-v2-${{ hashFiles('winapk/scripts/build_framework_res.sh', 'winapk/windows/scripts/build_framework_res.sh') }}
+
+      - uses: actions/cache@v4
+        with:
+          path: winapk/thirdparty/angle-win
+          key: angle-${{ hashFiles('winapk/windows/scripts/fetch_angle.sh') }}
+
+      - name: Stage the runtime
+        working-directory: winapk
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/stage_runtime.sh build Win.apk
+          curl -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
+          mkdir jre-unpacked
+          unzip -q jre.zip -d jre-unpacked
+          mv jre-unpacked/* Win.apk/jre
+          test -f Win.apk/jre/bin/server/jvm.dll
+          cp windows/package/README.txt Win.apk/
+          # The smoke test runs on a copy, so nothing it writes can end up in the packaged runtime
+          # (upstream zips the folder before its smoke test for the same reason).
+          cp -r Win.apk Win.apk-smoke
+
+      - name: Smoke test the runtime
+        working-directory: winapk
+        run: |
+          apk=org.secuso.privacyfriendlysudoku_101.apk
+          curl -sSfL -o sudoku.apk "https://f-droid.org/repo/$apk" \
+            || curl -sSfL -o sudoku.apk "https://f-droid.org/archive/$apk"
+          export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
+          timeout 600 ./Win.apk-smoke/bin/winapk-runtime.exe --apk sudoku.apk --data "$(cygpath -w "$PWD/appdata")" \
+            > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
+          grep -E "frames presented" boot.log
+
+      # ---- WinApk Launcher ----
+
+      - name: Record the runtime's source and license in the runtime folder
+        working-directory: winapk
+        run: |
+          {
+            echo "Win.apk runtime bundled with WinApk Launcher $TAG"
+            echo "Source repository: https://github.com/$RUNTIME_REPO"
+            echo "Requested ref: $RUNTIME_REF"
+            echo "Commit: $RUNTIME_SHA"
+            echo "Source tree: https://github.com/$RUNTIME_REPO/tree/$RUNTIME_SHA"
+            echo "License: GNU AGPL-3.0 (LICENSE.txt in this folder)"
+          } > Win.apk/SOURCE.txt
+          cp LICENSE Win.apk/LICENSE.txt
+          cat Win.apk/SOURCE.txt
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish the launcher
+        shell: pwsh
+        run: |
+          dotnet publish WinApkLauncher.csproj -c Release -r win-x64 --self-contained true -o publish `
+            "-p:Version=$env:VERSION" -p:ContinuousIntegrationBuild=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # No local paths in our binaries (the checkout folder, any user profile).
+          ./tools/check-paths.ps1 -Patterns 'C:\Users\', $env:GITHUB_WORKSPACE publish/WinApkLauncher.exe publish/WinApkLauncher.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Get-Item publish/WinApkLauncher.exe).VersionInfo | Format-List ProductName, ProductVersion, FileVersion
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          # A pinned Inno Setup 6, checked against its SHA-256, so the build does not depend on the image.
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $env:INNO_URL -OutFile $setup
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup checksum mismatch: $hash" }
+          $dir = Join-Path $env:RUNNER_TEMP 'innosetup'
+          Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', "/DIR=$dir" -Wait
+          & "$dir\ISCC.exe" "/DLauncherDir=$PWD\publish" "/DRuntimeDir=$PWD\winapk\Win.apk" "/DAppVersion=$env:VERSION" `
+            "/O$PWD\dist" installer\WinApkLauncher.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Make the portable zip
+        shell: pwsh
+        run: |
+          $name = "WinApkLauncher-$env:VERSION-portable"
+          $stage = Join-Path dist $name
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item publish\* $stage -Recurse
+          Copy-Item winapk\Win.apk (Join-Path $stage runtime) -Recurse
+          Copy-Item installer\portable.txt $stage
+          Copy-Item LICENSE (Join-Path $stage LICENSE.txt)
+          Copy-Item THIRD_PARTY_NOTICES.md, README.md $stage
+          Push-Location dist
+          7z a -tzip -mx=7 "$name.zip" $name | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          Remove-Item -Recurse -Force $stage
+
+      - name: Write the release notes
+        shell: pwsh
+        run: |
+          $setup = "WinApkLauncher-Setup-$env:VERSION.exe"
+          $zip = "WinApkLauncher-$env:VERSION-portable.zip"
+          $sums = foreach ($f in $setup, $zip) { "{0}  {1}" -f (Get-FileHash "dist\$f" -Algorithm SHA256).Hash.ToLower(), $f }
+          $sums | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          $m = Select-String -Path winapk\Win.apk\jre\release -Pattern '^JAVA_RUNTIME_VERSION="(.*)"'
+          $jre = if ($m) { $m.Matches[0].Groups[1].Value } else { '21' }
+          $notes = @'
+          WinApk Launcher {TAG}: a launcher and per-app settings manager for Win.apk, which runs Android apps on Windows 10/11 x64.
+
+          ## Downloads
+
+          | File | What it is |
+          |---|---|
+          | `{SETUP}` | Installer, per user (no administrator rights). Includes the Win.apk runtime. |
+          | `{ZIP}` | The same files plus `portable.txt`: unzip anywhere and start `WinApkLauncher.exe`. Everything stays in that folder. |
+
+          SHA-256 (also in `SHA256SUMS.txt`):
+
+          ```
+          {SUMS}
+          ```
+
+          ## Bundled Win.apk runtime: exact source
+
+          The Win.apk runtime in this release is licensed under the GNU AGPL-3.0. This release's workflow built it from:
+
+          - Repository: https://github.com/{RREPO}
+          - Requested ref: `{RREF}`
+          - Commit: `{RSHA}`
+          - Source code at that commit: https://github.com/{RREPO}/tree/{RSHA}
+
+          The same information is in `runtime\SOURCE.txt` next to the installed launcher. The runtime bundles Eclipse Temurin JRE {JRE} and ANGLE; see `THIRD_PARTY_NOTICES.md`. WinApk Launcher's own source for this release: https://github.com/{REPO}/tree/{SHA}
+
+          Win.apk is by israel2176 (https://github.com/israel2176/win.apk), based on Mac.apk by kksimp (https://github.com/kksimp/Mac.apk). WinApk Launcher is not affiliated with Google, WhatsApp or Meta.
+          '@
+          $values = [ordered]@{
+            '{TAG}' = $env:TAG; '{SETUP}' = $setup; '{ZIP}' = $zip; '{SUMS}' = ($sums -join "`n")
+            '{RREPO}' = $env:RUNTIME_REPO; '{RREF}' = $env:RUNTIME_REF; '{RSHA}' = $env:RUNTIME_SHA
+            '{JRE}' = $jre; '{REPO}' = $env:GITHUB_REPOSITORY; '{SHA}' = $env:GITHUB_SHA
+          }
+          foreach ($k in $values.Keys) { $notes = $notes.Replace($k, [string]$values[$k]) }
+          $notes | Set-Content dist\RELEASE_NOTES.md -Encoding utf8
+          Get-Content dist\RELEASE_NOTES.md
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $pre = @()
+          if ($env:TAG -match '-') { $pre = @('--prerelease') }
+          gh release create $env:TAG `
+            "dist\WinApkLauncher-Setup-$env:VERSION.exe" "dist\WinApkLauncher-$env:VERSION-portable.zip" dist\SHA256SUMS.txt `
+            --target $env:GITHUB_SHA --title "WinApk Launcher $env:TAG" --notes-file dist\RELEASE_NOTES.md @pre
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
