@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+publish/
+out/
+dist/
+
+# Installer output (ISCC writes to installer\Output by default)
+installer/Output/
+WinApkLauncher-Setup-*.exe
+*.zip
+
+# IDE / user files
+*.user
+*.suo
+.vs/
+.vscode/
+
+# Files a local portable run may leave in the repo root
+/profiles.json*
+/portable.txt
+/cache/
+/logs/
+/apps/
+/runtime/
