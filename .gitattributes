@@ -9,3 +9,4 @@
 *.yml text eol=lf
 *.png binary
 *.ico binary
+LICENSE text eol=crlf

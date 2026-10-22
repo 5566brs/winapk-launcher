@@ -1,0 +1,13 @@
+WinApk Launcher - portable mode
+
+This file turns on portable mode. While it sits next to WinApkLauncher.exe, the launcher
+keeps everything in this folder:
+
+  profiles.json   your app profiles and settings
+  cache\          app icons
+  logs\           one log per launch
+  apps\           the default data folder of each app (its Android data)
+  runtime\        the bundled Win.apk runtime
+
+Delete this file to use the per-user folders instead (%APPDATA%\WinApk Launcher and
+%LOCALAPPDATA%\WinApk Launcher). Nothing is moved automatically.
