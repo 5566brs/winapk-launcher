@@ -1,28 +1,70 @@
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace WinApkLauncher;
 
 /// <summary>Holds a started runtime process plus everything needed to report on it.</summary>
 public sealed class LaunchedProcess
 {
-    public required Process Process { get; init; }
+    public Process Process { get; internal set; } = null!;
     public required string LogPath { get; init; }
     public required string CommandLine { get; init; }
     public required IReadOnlyList<(string Key, string Value)> Env { get; init; }
     public required Profile Profile { get; init; }
 
     /// <summary>The per-app proxy adapter child, when this launch has a proxy; else null.</summary>
-    public Process? ProxyAdapter { get; init; }
-    public int ProxyPort { get; init; }
+    public Process? ProxyAdapter { get; internal set; }
+    public int ProxyPort { get; internal set; }
 
-    private StreamWriter? _log;
+    // The launcher's own append handle to the run log, kept to add the exit line. The runtime has
+    // its own handle to the same file, so the log does not depend on this one (or on the launcher).
+    private SafeFileHandle? _log;
+    private readonly object _gate = new();
+    private bool _exited;
+    private Action? _onExit;
 
-    internal void AttachLog(StreamWriter log) => _log = log;
+    internal void AttachLog(SafeFileHandle log) => _log = log;
+
     internal void CloseLog()
     {
-        try { _log?.Flush(); _log?.Dispose(); } catch { }
-        _log = null;
+        lock (_gate)
+        {
+            try { _log?.Dispose(); } catch { }
+            _log = null;
+        }
+    }
+
+    /// <summary>Runs <paramref name="onExit"/> once the runtime has exited, at once if it already has.
+    /// Called on a thread-pool thread.</summary>
+    public void WhenExited(Action onExit)
+    {
+        bool now;
+        lock (_gate)
+        {
+            now = _exited;
+            if (!now) _onExit += onExit;
+        }
+        if (now) onExit();
+    }
+
+    internal void OnExited(Process proc)
+    {
+        Action? listeners;
+        lock (_gate)
+        {
+            if (_exited) return;
+            _exited = true;
+            listeners = _onExit;
+            _onExit = null;
+            if (_log != null)
+            {
+                NativeProcess.Append(_log, $"# ---- exited, code {RuntimeLauncher.SafeExitCode(proc)} ----{Environment.NewLine}");
+                try { _log.Dispose(); } catch { }
+                _log = null;
+            }
+        }
+        listeners?.Invoke();
     }
 }
 
@@ -30,8 +72,9 @@ public sealed class LaunchedProcess
 /// Turns a <see cref="Profile"/> into a winapk-runtime.exe invocation: the
 /// --apk/--data command line plus the env vars set for that child process only
 /// (WINAPK_PHONE_SIZE, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL,
-/// WINAPK_DENSITY, WINAPK_ALLOW_SECOND_INSTANCE, WINAPK_PROXY). stdout+stderr are
-/// streamed to a per-run log file in <see cref="AppPaths.LogsDir"/>.
+/// WINAPK_DENSITY, WINAPK_ALLOW_SECOND_INSTANCE, WINAPK_PROXY). The runtime's stdout and
+/// stderr go straight to a per-run log file in <see cref="AppPaths.LogsDir"/>, through a handle
+/// the runtime owns, so the log keeps growing after the launcher exits.
 /// </summary>
 public static class RuntimeLauncher
 {
@@ -106,9 +149,10 @@ public static class RuntimeLauncher
     }
 
     /// <summary>
-    /// Starts the runtime for <paramref name="p"/>. Creates the data root and the
-    /// log file, sets the env on the child only, and streams its output to the log.
-    /// Throws on a validation failure or if the process cannot start.
+    /// Starts the runtime for <paramref name="p"/>. Creates the data root and the run log, writes
+    /// the launcher's header lines, then starts the runtime with the log file as its stdout and
+    /// stderr (one append handle) and NUL as its stdin, inheriting nothing else. The env is set on
+    /// the child only. Throws on a validation failure or if the process cannot start.
     /// </summary>
     public static LaunchedProcess Start(string? runtimeExe, Profile p)
     {
@@ -118,17 +162,14 @@ public static class RuntimeLauncher
 
         Directory.CreateDirectory(p.DataRoot);
         Directory.CreateDirectory(LogsDir);
-
-        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-        var safe = MakeFileSafe(p.Name);
-        var logPath = Path.Combine(LogsDir, $"{safe}-{stamp}.log");
+        var logPath = NewLogPath(p);
 
         // A proxy profile gets its local adapter first, so we can point the app at its port.
-        Process? adapter = null;
+        AdapterChild? adapter = null;
         int socksPort = 0;
         if (p.HasProxy)
         {
-            try { (adapter, socksPort) = ProxyAdapter.StartChild(p.Id); }
+            try { adapter = ProxyAdapter.StartChild(p.Id); socksPort = adapter.Port; }
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
@@ -138,77 +179,72 @@ public static class RuntimeLauncher
         }
 
         var env = BuildEnv(p, socksPort);
-        var psi = new ProcessStartInfo
+        var commandLine = BuildCommandLine(runtimeExe, p);
+        SafeFileHandle? log = null;
+        try
         {
-            FileName = runtimeExe,
-            UseShellExecute = false,
-            CreateNoWindow = true,          // no console window; the APP opens its own window
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory,
-        };
-        psi.ArgumentList.Add("--apk");
-        psi.ArgumentList.Add(p.ApkPath);
-        psi.ArgumentList.Add("--data");
-        psi.ArgumentList.Add(p.DataRoot);
-        foreach (var (k, v) in env) psi.Environment[k] = v;
+            log = NativeProcess.OpenAppend(logPath);
+            var header = new StringBuilder();
+            void H(string line) => header.Append("# ").Append(line).Append(Environment.NewLine);
+            H($"{AppInfo.ProductName} {AppInfo.Version}");
+            H($"{DateTime.Now:O}");
+            H($"profile: {p.Name}");
+            H($"command: {commandLine}");
+            H("env:");
+            foreach (var (k, v) in env) H($"  {k}={v}");
+            if (adapter != null) H($"proxy: {p.ProxyLabel} via local adapter 127.0.0.1:{socksPort} (pid {adapter.Process.Id})");
+            H($"runtime data/logs: {RuntimeLogDir(p)}");
+            H("----------------------------------------------------------------");
+            NativeProcess.Append(log, header.ToString());
 
-        var log = new StreamWriter(new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-        {
-            AutoFlush = true,
-        };
-        log.WriteLine($"# {AppInfo.ProductName} {AppInfo.Version}");
-        log.WriteLine($"# {DateTime.Now:O}");
-        log.WriteLine($"# profile: {p.Name}");
-        log.WriteLine($"# command: {BuildCommandLine(runtimeExe, p)}");
-        log.WriteLine($"# env:");
-        foreach (var (k, v) in env) log.WriteLine($"#   {k}={v}");
-        if (adapter != null) log.WriteLine($"# proxy: {p.ProxyLabel} via local adapter 127.0.0.1:{socksPort} (pid {adapter.Id})");
-        log.WriteLine($"# runtime data/logs: {RuntimeLogDir(p)}");
-        log.WriteLine("# ----------------------------------------------------------------");
+            var launched = new LaunchedProcess
+            {
+                LogPath = logPath,
+                CommandLine = commandLine,
+                Env = env,
+                Profile = p,
+                ProxyAdapter = adapter?.Process,
+                ProxyPort = socksPort,
+            };
+            launched.AttachLog(log);
 
-        var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        var launched = new LaunchedProcess
-        {
-            Process = proc,
-            LogPath = logPath,
-            CommandLine = BuildCommandLine(runtimeExe, p),
-            Env = env,
-            Profile = p,
-            ProxyAdapter = adapter,
-            ProxyPort = socksPort,
-        };
-        launched.AttachLog(log);
+            using var nul = NativeProcess.OpenNul();
+            launched.Process = NativeProcess.Start(runtimeExe, new[] { "--apk", p.ApkPath, "--data", p.DataRoot }, env,
+                Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory, stdin: nul, stdout: log, stderr: log,
+                beforeResume: proc =>
+                {
+                    proc.EnableRaisingEvents = true;
+                    proc.Exited += (s, _) => launched.OnExited((Process)s!);
+                });
 
-        var gate = new object();
-        void Write(string? line)
-        {
-            if (line == null) return;
-            lock (gate) { try { log.WriteLine(line); } catch { } }
+            // Hand the runtime PID to the adapter so it can shut down when the app exits.
+            if (adapter != null)
+            {
+                try { adapter.SendRuntimePid(launched.Process.Id); }
+                catch { /* the adapter exits by itself after 60 s without a PID */ }
+            }
+            return launched;
         }
-        proc.OutputDataReceived += (_, e) => Write(e.Data);
-        proc.ErrorDataReceived += (_, e) => Write(e.Data);
-        proc.Exited += (_, _) =>
+        catch (Exception ex)
         {
-            lock (gate) { try { log.WriteLine($"# ---- exited, code {SafeExitCode(proc)} ----"); } catch { } }
-            launched.CloseLog();
-        };
-
-        if (!proc.Start())
-        {
-            try { adapter?.Kill(); } catch { }
-            throw new InvalidOperationException("CreateProcess failed (winapk-runtime did not start).");
+            try { log?.Dispose(); } catch { }
+            try { if (adapter != null && !adapter.Process.HasExited) adapter.Process.Kill(); } catch { }
+            if (ex is InvalidOperationException) throw;
+            throw new InvalidOperationException($"winapk-runtime did not start: {ex.Message}", ex);
         }
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        // Hand the runtime PID to the adapter so it can shut down when the app exits.
-        if (adapter != null)
+        finally
         {
-            try { adapter.StandardInput.WriteLine(proc.Id); adapter.StandardInput.Flush(); }
-            catch { /* adapter self-exits after 60 s even if this fails */ }
+            adapter?.Dispose(); // closes our ends of the handshake pipes; the adapter keeps running
         }
-        return launched;
+    }
+
+    /// <summary>logs\&lt;profile&gt;-&lt;yyyyMMdd-HHmmss&gt;.log, with -2, -3... if that name is taken.</summary>
+    private static string NewLogPath(Profile p)
+    {
+        var stem = Path.Combine(LogsDir, $"{MakeFileSafe(p.Name)}-{DateTime.Now:yyyyMMdd-HHmmss}");
+        var path = stem + ".log";
+        for (int n = 2; File.Exists(path); n++) path = $"{stem}-{n}.log";
+        return path;
     }
 
     public static int SafeExitCode(Process p)
@@ -216,13 +252,16 @@ public static class RuntimeLauncher
         try { return p.HasExited ? p.ExitCode : -1; } catch { return -1; }
     }
 
-    /// <summary>Last N lines of a log file, for an error dialog.</summary>
+    /// <summary>Last N lines of a log file, for an error dialog. Reads while the app may still write.</summary>
     public static string TailLog(string path, int lines = 25)
     {
         try
         {
-            var all = File.ReadAllLines(path);
-            var take = all.Length <= lines ? all : all[^lines..];
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(fs, Encoding.UTF8);
+            var all = reader.ReadToEnd().Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+            if (all.Count > 0 && all[^1].Length == 0) all.RemoveAt(all.Count - 1);
+            var take = all.Count <= lines ? all : all.GetRange(all.Count - lines, lines);
             return string.Join(Environment.NewLine, take);
         }
         catch (Exception ex) { return $"(could not read log: {ex.Message})"; }

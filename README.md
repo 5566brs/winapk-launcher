@@ -132,7 +132,7 @@ When you launch an app, the launcher looks for `winapk-runtime.exe` in this orde
 | (none) | Opens the launcher. |
 | `<package>` or `--add <package>` | Opens the launcher with the **Add profile** dialog filled in for that file. If the launcher is already open, that window shows the dialog. |
 | `--list` | Lists the profiles, the settings file and the runtime in use. |
-| `--launch <name or id>` | Launches a profile, with its proxy adapter, and leaves it running. Desktop shortcuts use this. |
+| `--launch <name or id>` | Launches a profile, with its proxy adapter, and returns at once. The app keeps running and writes its output to the run log. Desktop shortcuts use this. |
 | `--launch <name or id> -s <seconds>` | Launches a profile, watches it for that many seconds, then closes it (a smoke test). |
 | `--dry-run <name or id>` | Prints the runtime, arguments and environment variables a launch would use. Starts nothing. |
 | `--test-proxy <name or id>` | Runs the Edit dialog's proxy test for a profile. |

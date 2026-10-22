@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -316,6 +317,10 @@ public static class ProxyAdapter
         // Stdout contract: the launcher reads this exact line to learn the port.
         Console.Out.WriteLine("PORT " + port);
         Console.Out.Flush();
+        // From here on the adapter talks only to proxy.log: the launcher may already be gone, and its
+        // end of the stdout pipe with it.
+        Console.SetOut(TextWriter.Null);
+        Console.SetError(TextWriter.Null);
 
         using var life = new CancellationTokenSource();
         WatchRuntimePid(life, logger);
@@ -514,47 +519,81 @@ public static class ProxyAdapter
 
     /// <summary>
     /// Start <c>WinApkLauncher.exe --proxy-adapter &lt;profileId&gt;</c> as a hidden child and read the
-    /// port it prints. The caller then launches the runtime with the SOCKS flags and writes the runtime
-    /// PID to <see cref="Process.StandardInput"/>. Throws on failure so Launch can report it.
+    /// port it prints. Its stdin and stdout are private pipes for that handshake and its stderr is NUL;
+    /// it inherits nothing else, so it never holds a caller's console or pipe. The caller then launches
+    /// the runtime with the SOCKS flags and hands over the runtime PID with
+    /// <see cref="AdapterChild.SendRuntimePid"/>. Throws on failure so Launch can report it.
     /// </summary>
-    public static (Process Process, int Port) StartChild(string profileId)
+    public static AdapterChild StartChild(string profileId)
     {
         if (RuntimeLauncher.LaunchBlocked) throw new InvalidOperationException("Launching is disabled in this mode.");
         var exe = Environment.ProcessPath
             ?? Path.Combine(AppContext.BaseDirectory, AppInfo.ExeName);
-        var psi = new ProcessStartInfo
-        {
-            FileName = exe,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardInput = true,
-            WorkingDirectory = AppContext.BaseDirectory,
-        };
-        psi.ArgumentList.Add("--proxy-adapter");
-        psi.ArgumentList.Add(profileId);
 
-        var proc = Process.Start(psi) ?? throw new InvalidOperationException("could not start the proxy adapter");
+        var toChild = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.None);   // its stdin
+        var fromChild = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.None);  // its stdout
+        Process? proc = null;
         try
         {
+            using (var nul = NativeProcess.OpenNul())
+                proc = NativeProcess.Start(exe, new[] { "--proxy-adapter", profileId }, env: null, AppContext.BaseDirectory,
+                    stdin: toChild.ClientSafePipeHandle, stdout: fromChild.ClientSafePipeHandle, stderr: nul);
+            toChild.DisposeLocalCopyOfClientHandle();
+            fromChild.DisposeLocalCopyOfClientHandle();
+
             // The adapter prints "PORT <n>" as its first stdout line, promptly.
+            var reader = new StreamReader(fromChild, Encoding.ASCII, false, 256, leaveOpen: true);
             var readPort = Task.Run(() =>
             {
                 string? line;
-                while ((line = proc.StandardOutput.ReadLine()) != null)
+                while ((line = reader.ReadLine()) != null)
                     if (line.StartsWith("PORT ", StringComparison.Ordinal) && int.TryParse(line.AsSpan(5).Trim(), out var p))
                         return p;
                 return -1;
             });
             if (!readPort.Wait(TimeSpan.FromSeconds(10)) || readPort.Result <= 0)
                 throw new InvalidOperationException("the proxy adapter did not report a port");
-            return (proc, readPort.Result);
+            return new AdapterChild(proc, readPort.Result, toChild, fromChild);
         }
         catch
         {
-            try { if (!proc.HasExited) proc.Kill(); } catch { }
+            try { if (proc != null && !proc.HasExited) proc.Kill(); } catch { }
+            toChild.Dispose();
+            fromChild.Dispose();
             throw;
         }
+    }
+}
+
+/// <summary>A started proxy adapter, plus the launcher's ends of its handshake pipes.</summary>
+public sealed class AdapterChild : IDisposable
+{
+    private readonly AnonymousPipeServerStream _toChild, _fromChild;
+
+    internal AdapterChild(Process process, int port, AnonymousPipeServerStream toChild, AnonymousPipeServerStream fromChild)
+    {
+        Process = process;
+        Port = port;
+        _toChild = toChild;
+        _fromChild = fromChild;
+    }
+
+    public Process Process { get; }
+    public int Port { get; }
+
+    /// <summary>Tell the adapter which process to follow; it exits when that process exits.</summary>
+    public void SendRuntimePid(int pid)
+    {
+        var bytes = Encoding.ASCII.GetBytes(pid + "\n");
+        _toChild.Write(bytes, 0, bytes.Length);
+        _toChild.Flush();
+    }
+
+    /// <summary>Closes the handshake pipes. The adapter keeps running.</summary>
+    public void Dispose()
+    {
+        try { _toChild.Dispose(); } catch { }
+        try { _fromChild.Dispose(); } catch { }
     }
 }
 

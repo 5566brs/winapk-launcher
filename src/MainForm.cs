@@ -655,7 +655,7 @@ public sealed class MainForm : Form
         }
         _running.Add(lp);
 
-        lp.Process.Exited += (_, _) => OnProcessExited(lp);
+        lp.WhenExited(() => OnProcessExited(lp));
         RefreshAll();
         _status.Text = $"launched ‘{p.Name}’ • log: {lp.LogPath}";
     }
