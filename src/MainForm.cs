@@ -947,14 +947,18 @@ public sealed class MainForm : Form
     /// <summary>Open the Add dialog for queued packages, one at a time, once no other dialog is open.</summary>
     private void ProcessPendingAdds()
     {
-        // A modal dialog (Edit, a message box, a file picker) disables this window; wait for it to close.
+        // A modal dialog (Edit, a message box, a file picker) disables this window natively, without
+        // changing Control.Enabled; wait until it closes.
         if (_pendingAdds.Count == 0) { _pendingTimer.Stop(); return; }
-        if (!Enabled || OwnedForms.Length > 0) { _pendingTimer.Start(); return; }
+        if (!IsHandleCreated || !IsWindowEnabled(Handle) || OwnedForms.Length > 0) { _pendingTimer.Start(); return; }
         _pendingTimer.Stop();
         var path = _pendingAdds.Dequeue();
         AddProfile(path);
         if (_pendingAdds.Count > 0) _pendingTimer.Start();
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowEnabled(IntPtr hWnd);
 
     // ----- drag & drop an APK to add it -----
 
