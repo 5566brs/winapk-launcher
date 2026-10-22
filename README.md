@@ -73,6 +73,11 @@ can't decrypt it.
 The installer isn't code-signed, so Windows SmartScreen might warn you. To continue, select
 **More info**, then **Run anyway**.
 
+The first time you open the launcher, it has no apps. To add one, drag a package onto the window
+or select **Add app**.
+
+![The launcher with no apps yet, showing "Drag an .apk or .xapk here, or click Add app."](docs/screenshot-empty.png)
+
 To uninstall, open **Apps** in Windows **Settings**, and uninstall **WinApk Launcher**. This
 removes the program files and keeps your settings and your apps' data; see
 [Where your data lives](#where-your-data-lives).
