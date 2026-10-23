@@ -72,9 +72,12 @@ internal static class Cli
     [DllImport("kernel32.dll")] private static extern bool AttachConsole(int pid);
     private const int ATTACH_PARENT_PROCESS = -1;
 
+    /// <summary>False when started without a console, for example by a desktop shortcut.</summary>
+    private static bool _hasConsole;
+
     public static int Run(string[] args)
     {
-        AttachConsole(ATTACH_PARENT_PROCESS);
+        _hasConsole = AttachConsole(ATTACH_PARENT_PROCESS);
         var store = LauncherStore.Load();
 
         switch (args[0].ToLowerInvariant())
@@ -110,6 +113,13 @@ internal static class Cli
                 if (args.Length < 2) { Console.Error.WriteLine("usage: --test-proxy <name|id>"); return 2; }
                 return TestProxy(store, args[1]);
 
+            case "--status":
+                if (args.Length < 2) { Console.Error.WriteLine("usage: --status <name|id>"); return 2; }
+                return Status(store, args[1]);
+
+            case "--self-test":
+                return SelfTest();
+
             case "--icon":
                 if (args.Length < 2) { Console.Error.WriteLine("usage: --icon <apk|xapk> [out.png] [--xml]"); return 2; }
                 IconExtractor.PreferXml = args.Any(a => a.Equals("--xml", StringComparison.OrdinalIgnoreCase));
@@ -124,10 +134,13 @@ internal static class Cli
                 Console.WriteLine("  --theme light|dark        open the GUI in a forced theme");
                 Console.WriteLine("  --screenshot <dir>        open the GUI, save tiles/list/edit captures, exit");
                 Console.WriteLine("  --list                    list profiles");
-                Console.WriteLine("  --launch <name>           launch a profile (proxy adapter included) and leave it running");
+                Console.WriteLine("  --launch <name>           launch a profile (proxy adapter included) and leave it running;");
+                Console.WriteLine("                            if it already runs or is starting: start nothing, exit code 3");
                 Console.WriteLine("  --launch <name> -s N      launch, watch N seconds, then close it (smoke test)");
                 Console.WriteLine("  --dry-run <name>          print the exe, args and env Launch would use (starts nothing)");
                 Console.WriteLine("  --test-proxy <name>       test the profile's proxy (same check as the Edit dialog)");
+                Console.WriteLine("  --status <name>           is the app running or still starting? (starts nothing)");
+                Console.WriteLine("  --self-test               run the launcher's built-in checks");
                 Console.WriteLine("  --icon <apk> [out.png]    trace the icon extraction for a package (no cache)");
                 Console.WriteLine("  --version                 print the version");
                 Console.WriteLine();
@@ -169,6 +182,26 @@ internal static class Cli
         var err = RuntimeLauncher.Validate(runtime, p);
         if (err != null) { Console.Error.WriteLine(err); return 2; }
 
+        // Never a second copy: a second runtime on the same app folder only exits with code 3.
+        var probe = RuntimeInstance.Probe(p, runtime);
+        bool another = p.AllowMultipleInstances && probe.State == InstanceState.Running;
+        if (probe.State != InstanceState.NotRunning && !another)
+        {
+            var pids = string.Join(", ", probe.Processes.Select(x => x.Pid));
+            if (probe.State == InstanceState.Running)
+            {
+                RuntimeInstance.BringToFront(probe.Window);
+                Console.WriteLine($"RESULT: {p.Name} is already running (pid {pids}); brought its window to the front. Nothing was started.");
+            }
+            else
+            {
+                const string why = "The first launch prepares the app and can take several minutes for large apps.";
+                Console.WriteLine($"RESULT: {p.Name} is still starting{(pids.Length > 0 ? $" (pid {pids})" : "")}. {why} Nothing was started.");
+                if (!_hasConsole) ShowNotice($"{p.Name} is still starting.", why);
+            }
+            return RuntimeInstance.ExitAlreadyRunning;
+        }
+
         Console.WriteLine($"command: {RuntimeLauncher.BuildCommandLine(runtime, p)}");
         if (p.HasProxy) Console.WriteLine($"proxy:   {p.ProxyLabel}{(p.ResolveProxy()!.HasAuth ? " (auth)" : "")} via a local SOCKS5 adapter");
 
@@ -178,7 +211,8 @@ internal static class Cli
         Console.WriteLine("env:");
         foreach (var (k, v) in lp.Env) Console.WriteLine($"  {k}={v}");
         Console.WriteLine($"log: {lp.LogPath}");
-        Console.WriteLine($"runtime data/logs: {RuntimeLauncher.RuntimeLogDir(p)}");
+        if (Directory.Exists(RuntimeLauncher.RuntimeLogDir(p)))
+            Console.WriteLine($"runtime data/logs: {RuntimeLauncher.RuntimeLogDir(p)}");
 
         if (seconds < 0)
         {
@@ -254,6 +288,57 @@ internal static class Cli
         var val = RuntimeLauncher.Validate(runtime, p);
         Console.WriteLine(val == null ? "validation: OK (would launch)" : "validation: " + val.Replace("\n", " "));
         return 0;
+    }
+
+    /// <summary>The "still starting" notice for a launch without a console (a desktop shortcut).</summary>
+    private static void ShowNotice(string heading, string body)
+    {
+        try
+        {
+            ApplicationConfiguration.Initialize();
+            Theme.Initialize(null);
+            using var dlg = new LauncherDialog(AppInfo.ProductName, heading, body,
+                new[] { new DialogButton("ok", "OK", Accent: true) })
+            {
+                TopMost = true,
+                ShowInTaskbar = true,
+                StartPosition = FormStartPosition.CenterScreen,
+            };
+            Application.Run(dlg);
+        }
+        catch { }
+    }
+
+    /// <summary>Whether the profile's app runs or is starting, by the runtime's lock and processes. Starts nothing.</summary>
+    private static int Status(LauncherStore store, string nameOrId)
+    {
+        var p = store.Find(nameOrId);
+        if (p == null) { Console.Error.WriteLine($"no such profile: {nameOrId}"); return 2; }
+        var runtime = store.ResolveRuntime();
+        var appDir = RuntimeInstance.AppDir(p.DataRoot, p.ApkPath);
+        var probe = RuntimeInstance.Probe(p, runtime);
+        Console.WriteLine($"profile: {p.Name}  [{p.Id}]");
+        Console.WriteLine($"app folder: {appDir}");
+        Console.WriteLine($"lock: {probe.MutexName} ({(p.AllowMultipleInstances ? "not used: multiple instances allowed" : probe.LockHeld ? "held" : "free")})");
+        foreach (var x in probe.Processes)
+            Console.WriteLine($"  pid {x.Pid}: " + (x.Window != IntPtr.Zero ? $"window \"{x.WindowTitle}\"" : "no window yet"));
+        Console.WriteLine("state: " + probe.State switch
+        {
+            InstanceState.Running => "running",
+            InstanceState.Starting => "starting (no window yet)",
+            _ => "not running",
+        });
+        return 0;
+    }
+
+    /// <summary>The built-in checks: the runtime lock name mirror and the startup log parser.</summary>
+    private static int SelfTest()
+    {
+        var failures = RuntimeInstance.SelfTest();
+        failures.AddRange(StartupWatch.SelfTest());
+        foreach (var f in failures) Console.WriteLine("FAIL: " + f);
+        Console.WriteLine(failures.Count == 0 ? "self-test: OK" : $"self-test: {failures.Count} failure(s)");
+        return failures.Count == 0 ? 0 : 1;
     }
 
     /// <summary>Run the Edit dialog's proxy test from the console.</summary>

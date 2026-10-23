@@ -48,9 +48,10 @@ public sealed class Profile
     public int LogLevel { get; set; } = 0;
 
     /// <summary>
-    /// Allow more than one live instance. On the current Windows runtime there is no
-    /// single-instance guard, so independence comes purely from distinct data roots;
-    /// this still sets WINAPK_ALLOW_SECOND_INSTANCE=1 for forward compatibility.
+    /// Allow more than one live instance. The runtime runs one copy per app folder and refuses a
+    /// second with exit code 3; this sets WINAPK_ALLOW_SECOND_INSTANCE=1, which turns that off.
+    /// Launch then starts another copy once the running one has its window (never while it is
+    /// still starting). Independent accounts still need distinct data roots.
     /// </summary>
     public bool AllowMultipleInstances { get; set; } = false;
 

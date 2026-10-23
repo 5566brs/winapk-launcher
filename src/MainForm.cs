@@ -22,6 +22,13 @@ public sealed class MainForm : Form
     private readonly ContextMenuStrip _itemMenu = new();
     private readonly ContextMenuStrip _spaceMenu = new();
     private readonly List<LaunchedProcess> _running = new();
+
+    // Launches that have no window yet: the tile shows "Starting…" and the status bar the step.
+    private readonly List<StartupWatch> _starting = new();
+    private readonly System.Windows.Forms.Timer _startTimer = new() { Interval = 50 };
+    private int _startTicks;
+    private LauncherDialog? _notice; // the non-modal "still starting" notice, while it is open
+    private readonly HashSet<int> _stoppedPids = new(); // ended with Stop it: their exit is not a crash
     private readonly List<(ToolStripItem Item, char Glyph, bool OnAccent)> _glyphItems = new();
 
     private ToolStripButton _launchBtn = null!, _addBtn = null!, _editBtn = null!, _dupBtn = null!, _delBtn = null!;
@@ -98,6 +105,7 @@ public sealed class MainForm : Form
             if (!string.IsNullOrWhiteSpace(addPath)) QueueAdd(addPath);
         };
         _pendingTimer.Tick += (_, _) => ProcessPendingAdds();
+        _startTimer.Tick += (_, _) => OnStartTick();
 
         RefreshAll();
         ApplyViewMode(focus: false);
@@ -162,6 +170,9 @@ public sealed class MainForm : Form
         _runtimeBtn = Btn("Runtime path…", '\uE713', RuntimeTooltip(), () => EditRuntimePath(),
             align: ToolStripItemAlignment.Right);
         // Always in the "…" overflow menu.
+        var logs = Btn("Open logs folder", '\uE8B7', "Open the folder with the run logs:\n" + RuntimeLauncher.LogsDir,
+            () => OpenLogsFolder());
+        logs.Overflow = ToolStripItemOverflow.Always;
         var about = Btn($"About {AppInfo.ProductName}", '\uE946', $"{AppInfo.ProductName} {AppInfo.Version}", ShowAbout);
         about.Overflow = ToolStripItemOverflow.Always;
 
@@ -221,6 +232,7 @@ public sealed class MainForm : Form
         _tiles.AllowDrop = true;
         _tiles.IconProvider = p => AppIcons.Get(p.ApkPath);
         _tiles.IsRunning = IsRunning;
+        _tiles.IsStarting = IsStarting;
         _tiles.HasProxy = p => p.HasProxy;
         _tiles.TooltipProvider = TileTooltip;
         _tiles.SelectionChanged += (_, _) =>
@@ -447,8 +459,8 @@ public sealed class MainForm : Form
                 it.SubItems.Add(p.SdkInt > 0 ? p.SdkInt.ToString() : "29*");
                 it.SubItems.Add(p.AllowMultipleInstances ? "yes" : "");
                 it.SubItems.Add(p.ProxyLabel, p.HasProxy ? _t.Text : _t.SubText, _t.Content, Font);
-                bool running = IsRunning(p);
-                it.SubItems.Add(running ? "running" : "", running ? _t.Accent : _t.Text, _t.Content, Font);
+                bool running = IsRunning(p), starting = IsStarting(p);
+                it.SubItems.Add(starting ? "starting…" : running ? "running" : "", running ? _t.Accent : _t.Text, _t.Content, Font);
                 if (p.Id == _selectedId) it.Selected = true;
                 _list.Items.Add(it);
             }
@@ -513,8 +525,10 @@ public sealed class MainForm : Form
         _proxyLogBtn.Enabled = p?.HasProxy == true;
         _miProxyLogItem.Enabled = p?.HasProxy == true;
 
-        int running = _store.Profiles.Count(IsRunning);
+        int starting = _store.Profiles.Count(IsStarting);
+        int running = _store.Profiles.Count(x => IsRunning(x) && !IsStarting(x));
         _summary.Text = $"{_store.Profiles.Count} {(_store.Profiles.Count == 1 ? "app" : "apps")}" +
+                        (starting > 0 ? $"  •  {starting} starting" : "") +
                         (running > 0 ? $"  •  {running} running" : "");
         _runtimeBtn.ToolTipText = RuntimeTooltip();
         if (_store.ResolveRuntime() == null)
@@ -522,14 +536,22 @@ public sealed class MainForm : Form
             _status.Text = "winapk-runtime.exe not found  •  use Runtime path… to locate it";
             return;
         }
+        // While an app starts, the status bar shows its step: the selected app's, else the latest.
+        var watch = (p != null ? _starting.LastOrDefault(w => w.Profile.Id == p.Id) : null) ?? _starting.LastOrDefault();
+        if (watch != null) { _status.Text = watch.StatusLine; return; }
         if (p == null) { _status.Text = $"{_store.Profiles.Count} profiles  •  settings: {LauncherStore.StorePath}"; return; }
         var lp = _running.LastOrDefault(r => r.Profile.Id == p.Id);
+        var runtimeLogs = RuntimeLauncher.RuntimeLogDir(p);
         _status.Text = lp != null ? $"last log: {lp.LogPath}"
-                                  : $"runtime data/logs: {RuntimeLauncher.RuntimeLogDir(p)}";
+                     : Directory.Exists(runtimeLogs) ? $"runtime data/logs: {runtimeLogs}"
+                     : $"run logs: {RuntimeLauncher.LogsDir}";
     }
 
     private bool IsRunning(Profile p) =>
         _running.Any(r => r.Profile.Id == p.Id && !SafeExited(r.Process));
+
+    /// <summary>Launched by this window and still without its first window.</summary>
+    private bool IsStarting(Profile p) => _starting.Any(w => w.Profile.Id == p.Id);
 
     private static bool SafeExited(Process pr) { try { return pr.HasExited; } catch { return true; } }
 
@@ -543,7 +565,9 @@ public sealed class MainForm : Form
             p.DataRoot,
         };
         if (p.HasProxy) lines.Add($"Proxy: {p.ProxyLabel}");
-        if (IsRunning(p)) lines.Add("Running");
+        var watch = _starting.LastOrDefault(w => w.Profile.Id == p.Id);
+        if (watch != null) lines.Add($"{watch.PhaseText}  ({watch.ElapsedText})");
+        else if (IsRunning(p)) lines.Add("Running");
         return string.Join("\n", lines);
     }
 
@@ -646,6 +670,9 @@ public sealed class MainForm : Form
         var err = RuntimeLauncher.Validate(runtime, p);
         if (err != null) { MessageBox.Show(this, err, "Cannot launch", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
+        // Never a second copy: a second runtime on the same app folder only exits with code 3.
+        if (HandleAlreadyRunning(p, runtime!)) return;
+
         LaunchedProcess lp;
         try { lp = RuntimeLauncher.Start(runtime, p); }
         catch (Exception ex)
@@ -654,27 +681,217 @@ public sealed class MainForm : Form
             return;
         }
         _running.Add(lp);
+        _starting.Add(new StartupWatch(lp));
+        _startTimer.Start();
 
         lp.WhenExited(() => OnProcessExited(lp));
         RefreshAll();
         _status.Text = $"launched ‘{p.Name}’ • log: {lp.LogPath}";
     }
 
+    /// <summary>
+    /// True when this profile already runs or is still starting, so Launch must not start it again.
+    /// Checks this window's own launches first, then the runtime's lock and its processes (an app
+    /// started by a desktop shortcut, a script or another launcher). A running app comes to the
+    /// front; one without a window yet gets the "still starting" notice. A profile that allows
+    /// multiple instances may start another copy once the running one has its window.
+    /// </summary>
+    private bool HandleAlreadyRunning(Profile p, string runtime)
+    {
+        var watch = _starting.LastOrDefault(w => w.Profile.Id == p.Id);
+        if (watch != null) { ShowStillStarting(p, watch); return true; }
+
+        var mine = _running.Where(r => r.Profile.Id == p.Id && !SafeExited(r.Process)).ToList();
+        var probe = RuntimeInstance.Probe(p, runtime);
+        var window = probe.Window;
+        foreach (var r in mine)
+        {
+            if (window != IntPtr.Zero) break;
+            window = RuntimeInstance.FindAppWindow(r.Process.Id);
+        }
+        bool running = mine.Count > 0 || probe.State != InstanceState.NotRunning;
+        if (!running) return false;
+        if (window != IntPtr.Zero)
+        {
+            if (p.AllowMultipleInstances) return false;
+            RuntimeInstance.BringToFront(window);
+            _status.Text = $"‘{p.Name}’ is already running  •  brought its window to the front";
+            return true;
+        }
+        ShowStillStarting(p, null);
+        return true;
+    }
+
+    /// <summary>The non-modal notice for a Launch while the app has no window yet.</summary>
+    private void ShowStillStarting(Profile p, StartupWatch? watch)
+    {
+        var heading = $"{p.Name} is still starting.";
+        var body = "The first launch prepares the app and can take several minutes for large apps." +
+                   (watch != null ? $"\n\nNow: {watch.PhaseText}  ({watch.ElapsedText})" : "");
+        _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+        if (_notice is { IsDisposed: false })
+        {
+            _notice.UpdateText(heading, body);
+            _notice.Activate();
+            return;
+        }
+        _notice = new LauncherDialog("Still starting", heading, body,
+            new[] { new DialogButton("ok", "OK", Accent: true) });
+        _notice.FormClosed += (_, _) => _notice = null;
+        _notice.Show(this);
+    }
+
+    /// <summary>Animates the starting tiles; every 500 ms reads the logs and looks for the app windows.</summary>
+    private void OnStartTick()
+    {
+        if (_starting.Count == 0) { _startTimer.Stop(); return; }
+        if (_tilesMode) _tiles.AdvanceSpinner();
+        if (++_startTicks % 10 != 0) return;
+
+        StartupWatch? opened = null;
+        bool changed = false;
+        foreach (var w in _starting.ToList())
+        {
+            if (SafeExited(w.Launch.Process)) { _starting.Remove(w); changed = true; continue; } // OnProcessExited reports
+            w.Poll();
+            if (RuntimeInstance.FindAppWindow(w.Launch.Process.Id) != IntPtr.Zero)
+            {
+                _starting.Remove(w);
+                opened = w;
+                changed = true;
+            }
+        }
+        if (changed) RefreshAll();
+        else UpdateUiState();
+        if (opened != null) _status.Text = $"‘{opened.Profile.Name}’ is running  •  log: {opened.Launch.LogPath}";
+        if (_starting.Count == 0) _startTimer.Stop();
+    }
+
     private void OnProcessExited(LaunchedProcess lp)
     {
         if (InvokeRequired) { try { BeginInvoke(() => OnProcessExited(lp)); } catch { } return; }
         var code = RuntimeLauncher.SafeExitCode(lp.Process);
+        _starting.RemoveAll(w => w.Launch == lp);
         RefreshAll();
-        // A quick non-zero exit is treated as a crashed launch.
-        if (code != 0)
+        bool stopped = false;
+        try { stopped = _stoppedPids.Remove(lp.Process.Id); } catch { }
+        if (stopped) _status.Text = $"stopped ‘{lp.Profile.Name}’";
+        else if (code == RuntimeInstance.ExitAlreadyRunning) ShowAlreadyRunning(lp);
+        // Any other non-zero exit is treated as a crashed launch.
+        else if (code != 0) ShowCrashed(lp, code);
+    }
+
+    /// <summary>Exit code 3: another runtime holds this app's folder. Offers Wait, Show it and Stop it.</summary>
+    private void ShowAlreadyRunning(LaunchedProcess lp)
+    {
+        var p = lp.Profile;
+        var others = RunningCopies(p, except: lp);
+        var window = others.Select(x => x.Window).FirstOrDefault(h => h != IntPtr.Zero);
+        using var dlg = new LauncherDialog("Already running",
+            $"{p.Name} is already running, or still starting in the background.",
+            "This launch did not start a second copy, so the app's data is safe. The first launch of a " +
+            "large app can take several minutes before its window opens.\n\n" +
+            $"Log: {lp.LogPath}",
+            new[]
+            {
+                new DialogButton("wait", "Wait", Accent: true, Tip: "Close this message. The running copy carries on."),
+                new DialogButton("show", "Show it", Enabled: window != IntPtr.Zero,
+                    Tip: window != IntPtr.Zero ? "Bring its window to the front" : "It has no window yet"),
+                new DialogButton("stop", "Stop it", Enabled: others.Count > 0,
+                    Tip: others.Count > 0 ? "End the running copy" : "No runtime process for this app was found"),
+            });
+        switch (ShowLauncherDialog(dlg))
         {
-            var tail = RuntimeLauncher.TailLog(lp.LogPath);
-            var r = MessageBox.Show(this,
-                $"‘{lp.Profile.Name}’ exited with code {code} (crashed launch).\n\n" +
-                $"Log: {lp.LogPath}\n\n--- last lines ---\n{tail}\n\nOpen the full log?",
-                "Launch crashed", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
-            if (r == DialogResult.Yes) OpenInNotepad(lp.LogPath);
+            case "show":
+                RuntimeInstance.BringToFront(window);
+                break;
+            case "stop":
+                StopApp(p, except: lp);
+                break;
         }
+    }
+
+    /// <summary>The runtime processes serving this profile's app: this window's launches and any other.</summary>
+    private List<RuntimeProcess> RunningCopies(Profile p, LaunchedProcess? except)
+    {
+        int skip = -1;
+        try { if (except != null) skip = except.Process.Id; } catch { }
+        var list = RuntimeInstance.FindProcesses(p, _store.ResolveRuntime()).Where(x => x.Pid != skip).ToList();
+        foreach (var r in _running)
+        {
+            if (r == except || r.Profile.Id != p.Id || SafeExited(r.Process)) continue;
+            int pid;
+            try { pid = r.Process.Id; } catch { continue; }
+            if (list.All(x => x.Pid != pid))
+            {
+                var w = RuntimeInstance.FindAppWindow(pid, includeDialogs: true);
+                list.Add(new RuntimeProcess(pid, w, w != IntPtr.Zero ? RuntimeInstance.WindowText(w) : ""));
+            }
+        }
+        return list;
+    }
+
+    /// <summary>Asks, then ends the runtime processes that serve this profile's app.</summary>
+    private void StopApp(Profile p, LaunchedProcess? except)
+    {
+        var copies = RunningCopies(p, except);
+        if (copies.Count == 0)
+        {
+            MessageBox.Show(this, $"No running copy of {p.Name} was found. It may have exited already.", "Stop app",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        using (var confirm = new LauncherDialog("Stop app", $"Stop {p.Name}?",
+                   $"This ends {p.Name} at once" + (copies.Count > 1 ? $" ({copies.Count} processes)" : "") + ", " +
+                   "even if it is still preparing its first launch. Anything the app has not saved yet may be lost, " +
+                   "such as a message you are typing or data it has not written yet.",
+                   new[]
+                   {
+                       new DialogButton("stop", "Stop it"),
+                       new DialogButton("cancel", "Cancel", Accent: true),
+                   }, LauncherDialog.Kind.Warning))
+        {
+            if (ShowLauncherDialog(confirm) != "stop") return;
+        }
+        int failed = 0;
+        foreach (var c in copies)
+        {
+            _stoppedPids.Add(c.Pid);
+            if (!RuntimeInstance.Stop(c.Pid)) failed++;
+        }
+        RefreshAll();
+        _status.Text = failed == 0 ? $"stopped ‘{p.Name}’" : $"could not stop {failed} process(es) of ‘{p.Name}’";
+        if (failed > 0)
+            MessageBox.Show(this, $"{failed} process(es) of {p.Name} could not be stopped.", "Stop app",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    /// <summary>A non-zero exit other than 3: the log's last lines, the log and its folder.</summary>
+    private void ShowCrashed(LaunchedProcess lp, int code)
+    {
+        var p = lp.Profile;
+        var runtimeLogs = RuntimeLauncher.RuntimeLogDir(p);
+        var body = $"Log: {lp.LogPath}" +
+                   (Directory.Exists(runtimeLogs) ? $"\nRuntime data/logs: {runtimeLogs}" : "");
+        using var dlg = new LauncherDialog("Launch crashed", $"‘{p.Name}’ exited with code {code} (crashed launch).", body,
+            new[]
+            {
+                new DialogButton("log", "Open log", Accent: true),
+                new DialogButton("folder", "Open logs folder", Tip: "Open the logs folder in Explorer, with this log selected"),
+                new DialogButton("close", "Close"),
+            }, LauncherDialog.Kind.Error, details: RuntimeLauncher.TailLog(lp.LogPath));
+        switch (ShowLauncherDialog(dlg))
+        {
+            case "log": OpenInNotepad(lp.LogPath); break;
+            case "folder": OpenLogsFolder(lp.LogPath); break;
+        }
+    }
+
+    private string? ShowLauncherDialog(LauncherDialog dlg)
+    {
+        if (_dialogShownHook != null) { var hook = _dialogShownHook; dlg.Shown += (_, _) => hook(dlg); }
+        dlg.ShowDialog(this);
+        return dlg.Result;
     }
 
     private void AddProfile(string? apkPath = null)
@@ -759,8 +976,27 @@ public sealed class MainForm : Form
     {
         var p = Selected;
         var lp = p != null ? _running.LastOrDefault(r => r.Profile.Id == p.Id) : _running.LastOrDefault();
-        if (lp == null) { MessageBox.Show(this, "No run log yet for this profile.", "Log", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
-        OpenInNotepad(lp.LogPath);
+        // After a restart of the launcher: the newest log of this profile on disk.
+        var path = lp?.LogPath ?? (p != null ? RuntimeLauncher.LatestLog(p) : null);
+        if (path == null)
+        {
+            MessageBox.Show(this, $"No run log yet for this profile.\n\nRun logs are kept in:\n{RuntimeLauncher.LogsDir}",
+                "Log", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        OpenInNotepad(path);
+    }
+
+    /// <summary>Opens the run logs folder in Explorer, with <paramref name="select"/> selected if it exists.</summary>
+    private void OpenLogsFolder(string? select = null)
+    {
+        try
+        {
+            Directory.CreateDirectory(RuntimeLauncher.LogsDir);
+            var args = select != null && File.Exists(select) ? $"/select,\"{select}\"" : $"\"{RuntimeLauncher.LogsDir}\"";
+            Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Open logs folder", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
     private void OpenDataFolder()
@@ -950,7 +1186,7 @@ public sealed class MainForm : Form
         // A modal dialog (Edit, a message box, a file picker) disables this window natively, without
         // changing Control.Enabled; wait until it closes.
         if (_pendingAdds.Count == 0) { _pendingTimer.Stop(); return; }
-        if (!IsHandleCreated || !IsWindowEnabled(Handle) || OwnedForms.Length > 0) { _pendingTimer.Start(); return; }
+        if (!IsHandleCreated || !IsWindowEnabled(Handle) || OwnedForms.Any(f => f != _notice)) { _pendingTimer.Start(); return; }
         _pendingTimer.Stop();
         var path = _pendingAdds.Dequeue();
         AddProfile(path);
@@ -1021,6 +1257,7 @@ public sealed class MainForm : Form
             _listIcons.Dispose();
             _windowIcon?.Dispose();
             _pendingTimer.Dispose();
+            _startTimer.Dispose();
         }
         base.Dispose(disposing);
     }

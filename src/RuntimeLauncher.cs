@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 
 namespace WinApkLauncher;
@@ -193,7 +194,8 @@ public static class RuntimeLauncher
             H("env:");
             foreach (var (k, v) in env) H($"  {k}={v}");
             if (adapter != null) H($"proxy: {p.ProxyLabel} via local adapter 127.0.0.1:{socksPort} (pid {adapter.Process.Id})");
-            H($"runtime data/logs: {RuntimeLogDir(p)}");
+            // Only once the runtime has made it: on a first launch it does not exist yet.
+            if (Directory.Exists(RuntimeLogDir(p))) H($"runtime data/logs: {RuntimeLogDir(p)}");
             H("----------------------------------------------------------------");
             NativeProcess.Append(log, header.ToString());
 
@@ -245,6 +247,22 @@ public static class RuntimeLauncher
         var path = stem + ".log";
         for (int n = 2; File.Exists(path); n++) path = $"{stem}-{n}.log";
         return path;
+    }
+
+    /// <summary>The newest run log of a profile in <see cref="LogsDir"/> (by name), or null.</summary>
+    public static string? LatestLog(Profile p)
+    {
+        try
+        {
+            if (!Directory.Exists(LogsDir)) return null;
+            var safe = MakeFileSafe(p.Name);
+            var pattern = new Regex("^" + Regex.Escape(safe) + @"-\d{8}-\d{6}(-\d+)?\.log$", RegexOptions.IgnoreCase);
+            return new DirectoryInfo(LogsDir).EnumerateFiles(safe + "-*.log")
+                .Where(f => pattern.IsMatch(f.Name))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault()?.FullName;
+        }
+        catch { return null; }
     }
 
     public static int SafeExitCode(Process p)

@@ -22,3 +22,11 @@ jobs:
 
       - name: Build
         run: dotnet build WinApkLauncher.csproj -c Release -warnaserror -p:TreatWarningsAsErrors=true
+
+      # The runtime lock-name mirror (checked against values from the runtime's C++) and the
+      # startup log parser. The exe is a GUI app: piping its output makes PowerShell wait for it.
+      - name: Self-test
+        shell: pwsh
+        run: |
+          & bin/Release/net10.0-windows/WinApkLauncher.exe --self-test | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "self-test failed ($LASTEXITCODE)" }

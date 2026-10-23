@@ -45,6 +45,8 @@ internal sealed class TileView : ScrollableControl
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<Profile, bool>? IsRunning { get; set; }
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Func<Profile, bool>? IsStarting { get; set; }
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<Profile, bool>? HasProxy { get; set; }
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<Profile, string>? TooltipProvider { get; set; }
@@ -97,6 +99,32 @@ internal sealed class TileView : ScrollableControl
 
     /// <summary>Repaint after icons / running state changed.</summary>
     public void RefreshTiles() { PruneCaches(); Invalidate(); }
+
+    /// <summary>The label under a starting app's name.</summary>
+    public const string StartingLabel = "Starting…";
+
+    private int _spinFrame;
+
+    /// <summary>Advance the "starting" spinner one step and repaint only the starting tiles.</summary>
+    public void AdvanceSpinner()
+    {
+        if (IsStarting == null) return;
+        _spinFrame = (_spinFrame + 12) % 360;
+        for (int i = 0; i < _items.Count; i++)
+            if (IsStarting(_items[i])) Invalidate(SpinnerRect(TileRect(i)));
+    }
+
+    private Rectangle IconRect(Rectangle tile) => new(tile.X + (tile.Width - IconPx) / 2, tile.Y + S(16), IconPx, IconPx);
+
+    /// <summary>The spinner badge: the icon's bottom-right corner, like the proxy badge at the top right.</summary>
+    private Rectangle SpinnerRect(Rectangle tile)
+    {
+        var ir = IconRect(tile);
+        int bd = S(22);
+        var r = new Rectangle(ir.Right - bd + S(4), ir.Bottom - bd + S(4), bd, bd);
+        r.Inflate(S(2), S(2));
+        return r;
+    }
 
     /// <summary>For --screenshot: show a hover highlight on a tile without a mouse.</summary>
     internal void SimulateHover(int index) { _hover = index; Invalidate(); }
@@ -262,8 +290,9 @@ internal sealed class TileView : ScrollableControl
             g.DrawPath(pen, path);
         }
 
-        var ir = new Rectangle(r.X + (r.Width - IconPx) / 2, r.Y + S(16), IconPx, IconPx);
+        var ir = IconRect(r);
         string label;
+        bool starting = false;
         Color textColor = t.Text;
         if (isAdd)
         {
@@ -304,7 +333,9 @@ internal sealed class TileView : ScrollableControl
                 g.DrawImage(glyph, br.X + (br.Width - glyph.Width) / 2, br.Y + (br.Height - glyph.Height) / 2);
             }
 
-            if (IsRunning?.Invoke(p) == true)
+            starting = IsStarting?.Invoke(p) == true;
+            if (starting) DrawSpinner(g, t, SpinnerRect(r));
+            else if (IsRunning?.Invoke(p) == true)
             {
                 float w = S(16), h = S(4);
                 var pill = new RectangleF(r.X + (r.Width - w) / 2f, r.Bottom - h - S(5), w, h);
@@ -316,9 +347,35 @@ internal sealed class TileView : ScrollableControl
         g.SmoothingMode = SmoothingMode.Default;
 
         var tr = new Rectangle(r.X + S(6), ir.Bottom + S(10), r.Width - S(12), 2 * LineHeight + S(2));
+        if (starting)
+        {
+            // One line of name, then "Starting…".
+            const TextFormatFlags one = TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.SingleLine |
+                                        TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+            TextRenderer.DrawText(g, label, Font, new Rectangle(tr.X, tr.Y, tr.Width, LineHeight), textColor, one);
+            TextRenderer.DrawText(g, StartingLabel, Font, new Rectangle(tr.X, tr.Y + LineHeight, tr.Width, LineHeight + S(2)),
+                t.Dark ? Theme.Blend(t.Accent, Color.White, 0.35f) : t.Accent, one);
+            return;
+        }
         TextRenderer.DrawText(g, label, Font, tr, textColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak |
             TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix);
+    }
+
+    /// <summary>A small badge with a faint ring and a rotating accent arc.</summary>
+    private void DrawSpinner(Graphics g, Theme t, Rectangle area)
+    {
+        var br = Rectangle.Inflate(area, -S(2), -S(2));
+        using (var halo = new SolidBrush(t.Content))
+            g.FillEllipse(halo, RectangleF.Inflate(br, 1.5f, 1.5f));
+        using (var disc = new SolidBrush(t.Dark ? Theme.Blend(t.Content, Color.White, 0.08f) : Color.White))
+            g.FillEllipse(disc, br);
+        float w = Math.Max(2f, S(2) * 1.25f);
+        var ring = RectangleF.Inflate(br, -w * 1.4f, -w * 1.4f);
+        using (var track = new Pen(Theme.Blend(t.Content, t.Accent, 0.25f), w))
+            g.DrawEllipse(track, ring);
+        using var arc = new Pen(t.Accent, w) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawArc(arc, ring, _spinFrame * 1f - 90f, 100f);
     }
 
     private Bitmap ScaledIcon(Image src, int px)
