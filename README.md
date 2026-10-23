@@ -27,9 +27,10 @@ For what changed in each release, see [CHANGELOG.md](CHANGELOG.md).
   roots. They run as independent apps.
 - **Per-app proxy.** Route an app's network traffic through a SOCKS5, SOCKS4/4a or HTTP CONNECT
   proxy, with an optional username and password. **Test** checks the proxy from the Edit dialog.
-- **Startup progress.** While an app starts, its tile shows **Starting…** and the status bar
-  shows the current step. Launching an app that is already running brings its window to the
-  front instead of starting a second copy. See [First launch](#first-launch).
+- **Startup progress.** From the moment you launch an app until its window opens, a small
+  startup window shows the current step, and so do the app's tile and the status bar. Launching
+  an app that is already running brings its window to the front instead of starting a second
+  copy. See [First launch](#first-launch).
 - **Logs and shortcuts.** Each launch writes a log. The toolbar opens the **Run log**, the
   **Proxy log** and the app's **Data folder**, and its **…** menu has **Open logs folder**. The
   right-click menu has **Create desktop shortcut**, which launches that app directly.
@@ -93,13 +94,23 @@ The first time you launch an app, Win.apk installs it and converts its code befo
 app's window. This takes a few seconds for a small app and several minutes for a large app, such
 as WhatsApp. Later launches skip these steps.
 
-While an app starts, its tile shows **Starting…** with a small spinner, and the status bar shows
-the current step and the time so far: **Installing the app…**, **Converting the app's code (first
-launch only)…** or **Starting…**. If you launch the app again in the meantime, the launcher
-doesn't start a second copy. It tells you that the app is still starting, and once the app's
-window is open, it brings that window to the front.
+From the moment you launch an app, from the launcher, a desktop shortcut or `--launch`, a small
+startup window shows the app's icon and name, a progress bar, the time so far and the current
+step: **Installing the app…**, **Converting the app's code — first launch only, large apps take a
+few minutes…** or **Starting…**. The window closes when the app's window opens. If the app exits
+before that, the startup window says so and offers **Open log** and **Open logs folder**. To close
+only the startup window and let the app keep starting, select **Hide**.
+
+![The startup window: "PF Notes", "Starting…" with a progress bar, 0:43, and "Converting the app's code — first launch only, large apps take a few minutes…"](docs/screenshot-splash.png)
+
+In the launcher, the app's tile also shows **Starting…** with a small spinner, and the status bar
+shows the step.
 
 ![A tile marked "Starting…" while the status bar shows "Converting the app's code (first launch only)…"](docs/screenshot-starting.png)
+
+If you launch the app again in the meantime, the launcher doesn't start a second copy. It brings
+the startup window to the front, and once the app's window is open, it brings that window to the
+front.
 
 A profile with **Allow multiple instances** can start another copy, but only after the first copy
 has opened its window.
@@ -160,7 +171,8 @@ When you launch an app, the launcher looks for `winapk-runtime.exe` in this orde
 | (none) | Opens the launcher. |
 | `<package>` or `--add <package>` | Opens the launcher with the **Add profile** dialog filled in for that file. If the launcher is already open, that window shows the dialog. |
 | `--list` | Lists the profiles, the settings file and the runtime in use. |
-| `--launch <name or id>` | Launches a profile, with its proxy adapter, and returns at once. The app keeps running and writes its output to the run log. Desktop shortcuts use this. If the app is already running, it brings the app's window to the front instead. If the app is still starting, it says so. In both cases, it starts nothing and exits with code 3. |
+| `--launch <name or id>` | Launches a profile, with its proxy adapter, and returns at once. The app keeps running and writes its output to the run log. A startup window, in a separate process, shows the progress until the app's window opens. Desktop shortcuts use this. If the app is already running, it brings the app's window to the front instead. If the app is still starting, it brings the startup window to the front. In both cases, it starts nothing and exits with code 3. |
+| `--launch <name or id> --no-splash` | The same, without the startup window. |
 | `--launch <name or id> -s <seconds>` | Launches a profile, watches it for that many seconds, then closes it (a smoke test). |
 | `--dry-run <name or id>` | Prints the runtime, arguments and environment variables a launch would use. Starts nothing. |
 | `--test-proxy <name or id>` | Runs the Edit dialog's proxy test for a profile. |

@@ -11,23 +11,32 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Launching an app that is already running, or still starting, no longer starts a second copy
   that fails with "exited with code 3 (crashed launch)". If the app's window is open, the launcher
-  brings it to the front. If the app is still starting, the launcher tells you so and starts
-  nothing. This applies to **Launch**, double-click, Enter, desktop shortcuts and `--launch`.
+  brings it to the front. If the app is still starting, the launcher brings its startup window to
+  the front and starts nothing. This applies to **Launch**, double-click, Enter, desktop
+  shortcuts and `--launch`.
 - When an app does exit with code 3, the launcher no longer reports a crash. It says that the app
   is already running, or still starting in the background, and offers **Wait**, **Show it** and
   **Stop it**. **Stop it** asks first, because the app loses anything it hasn't saved.
 - The run log and the crash message no longer point to the app's `logs` folder in its data root
   before that folder exists.
+- Command-line output now reaches a file or a pipe when you redirect it in cmd.exe, for example
+  `WinApkLauncher.exe --version > version.txt`. It used to go to the console, and the file stayed
+  empty.
 - `SHA256SUMS.txt` in a release now has LF line endings, so `sha256sum -c SHA256SUMS.txt` works
   on Linux. The release workflow checks this file, and the hashes in the release notes, before it
   publishes.
 
 ### Added
 
-- Startup progress. From **Launch** until the app's window opens, the app's tile shows
-  **Starting…** with a small spinner, and the status bar shows the current step and the time so
-  far: **Installing the app…**, **Converting the app's code (first launch only)…** or
-  **Starting…**. The first launch of a large app, such as WhatsApp, can take several minutes.
+- A startup window for every launch, from the launcher, a desktop shortcut or `--launch`. It
+  shows the app's icon and name, **Starting…** with a progress bar, the time so far and the
+  current step: **Installing the app…**, **Converting the app's code — first launch only, large
+  apps take a few minutes…** or **Starting…**. It closes when the app's window opens. If the app
+  exits first, it says so and offers **Open log** and **Open logs folder**. **Hide** closes only
+  this window. The first launch of a large app, such as WhatsApp, can take several minutes.
+- Startup progress in the launcher: the app's tile shows **Starting…** with a small spinner, and
+  the status bar shows the current step.
+- `--launch <name or id> --no-splash` launches without the startup window.
 - An **Open logs folder** button in the crash message, which opens Explorer with that run log
   selected, and an **Open logs folder** command in the toolbar's **…** menu.
 - **Run log** opens the app's newest log even after you restart the launcher.

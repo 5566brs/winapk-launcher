@@ -8,8 +8,9 @@ using Microsoft.Win32.SafeHandles;
 namespace WinApkLauncher;
 
 /// <summary>
-/// Starts a child process that inherits exactly three handles, its stdin, stdout and stderr, and
-/// nothing else: CreateProcessW with STARTF_USESTDHANDLES and PROC_THREAD_ATTRIBUTE_HANDLE_LIST.
+/// Starts a child process that inherits exactly three handles, its stdin, stdout and stderr (plus
+/// any the caller names), and nothing else: CreateProcessW with STARTF_USESTDHANDLES and
+/// PROC_THREAD_ATTRIBUTE_HANDLE_LIST.
 /// A child started this way never holds the launcher's own std handles (for example the pipe of a
 /// caller running <c>WinApkLauncher.exe --launch X | tail</c>), so the caller is never kept waiting
 /// and the child does not depend on the launcher staying alive.
@@ -22,8 +23,11 @@ internal static class NativeProcess
     /// then resumes it. <paramref name="env"/> is merged over this process's environment; null
     /// inherits it unchanged. The child gets its own hidden console (CREATE_NO_WINDOW).
     /// </summary>
+    /// <param name="alsoInherit">Further handles the child inherits as they are (already inheritable,
+    /// owned by the caller), for example a process handle whose value is on the command line.</param>
     public static Process Start(string exe, IEnumerable<string> args, IReadOnlyList<(string Key, string Value)>? env,
-        string workingDir, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr, Action<Process>? beforeResume = null)
+        string workingDir, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr, Action<Process>? beforeResume = null,
+        IReadOnlyList<IntPtr>? alsoInherit = null)
     {
         var cmd = new StringBuilder();
         AppendArgument(cmd, exe, alwaysQuote: true);
@@ -51,7 +55,7 @@ internal static class NativeProcess
             var hIn = Inheritable(stdin);
             var hOut = Inheritable(stdout);
             var hErr = Inheritable(stderr);
-            var inherit = copies.Values.ToArray(); // distinct: the handle list rejects duplicates
+            var inherit = copies.Values.Concat(alsoInherit ?? Array.Empty<IntPtr>()).Distinct().ToArray(); // the list rejects duplicates
 
             var size = IntPtr.Zero;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);

@@ -343,12 +343,24 @@ internal static class RuntimeInstance
         return sb.ToString();
     }
 
-    /// <summary>Restores the window if it is minimized and brings it to the front.</summary>
+    /// <summary>
+    /// Restores the window if it is minimized and brings it to the front. When Windows refuses the
+    /// foreground change (this process is not the one the user is working in), it flashes instead.
+    /// </summary>
     public static bool BringToFront(IntPtr h)
     {
         if (h == IntPtr.Zero || !IsWindow(h)) return false;
         if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-        return SetForegroundWindow(h);
+        if (SetForegroundWindow(h)) return true;
+        var fi = new FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
+            hwnd = h,
+            dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG,
+            uCount = 3,
+        };
+        FlashWindowEx(ref fi);
+        return false;
     }
 
     /// <summary>Ends a runtime process and the processes it started (the converter's java.exe).</summary>
@@ -493,4 +505,19 @@ internal static class RuntimeInstance
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private const uint FLASHW_ALL = 3, FLASHW_TIMERNOFG = 12;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 }

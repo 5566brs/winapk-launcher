@@ -29,6 +29,7 @@ public sealed class MainForm : Form
     private int _startTicks;
     private LauncherDialog? _notice; // the non-modal "still starting" notice, while it is open
     private readonly HashSet<int> _stoppedPids = new(); // ended with Stop it: their exit is not a crash
+    private readonly Dictionary<StartupWatch, SplashForm> _splashes = new(); // startup windows of _starting
     private readonly List<(ToolStripItem Item, char Glyph, bool OnAccent)> _glyphItems = new();
 
     private ToolStripButton _launchBtn = null!, _addBtn = null!, _editBtn = null!, _dupBtn = null!, _delBtn = null!;
@@ -681,25 +682,33 @@ public sealed class MainForm : Form
             return;
         }
         _running.Add(lp);
-        _starting.Add(new StartupWatch(lp));
+        var watch = new StartupWatch(lp);
+        _starting.Add(watch);
         _startTimer.Start();
 
         lp.WhenExited(() => OnProcessExited(lp));
         RefreshAll();
         _status.Text = $"launched ‘{p.Name}’ • log: {lp.LogPath}";
+        ShowSplash(watch);
     }
 
     /// <summary>
     /// True when this profile already runs or is still starting, so Launch must not start it again.
     /// Checks this window's own launches first, then the runtime's lock and its processes (an app
     /// started by a desktop shortcut, a script or another launcher). A running app comes to the
-    /// front; one without a window yet gets the "still starting" notice. A profile that allows
-    /// multiple instances may start another copy once the running one has its window.
+    /// front; one without a window yet gets its startup window brought forward (or opened again
+    /// after Hide). A profile that allows multiple instances may start another copy once the
+    /// running one has its window.
     /// </summary>
     private bool HandleAlreadyRunning(Profile p, string runtime)
     {
         var watch = _starting.LastOrDefault(w => w.Profile.Id == p.Id);
-        if (watch != null) { ShowStillStarting(p, watch); return true; }
+        if (watch != null)
+        {
+            ShowSplash(watch);
+            _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+            return true;
+        }
 
         var mine = _running.Where(r => r.Profile.Id == p.Id && !SafeExited(r.Process)).ToList();
         var probe = RuntimeInstance.Probe(p, runtime);
@@ -718,17 +727,47 @@ public sealed class MainForm : Form
             _status.Text = $"‘{p.Name}’ is already running  •  brought its window to the front";
             return true;
         }
-        ShowStillStarting(p, null);
+        // Started elsewhere and still starting: its startup window, or a new one that follows it.
+        _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+        if (SplashForm.TryBringToFront(SplashForm.KeyFor(p, runtime), waitMs: 1500)) return true;
+        var target = probe.Processes.FirstOrDefault();
+        if (target != null && SplashProcess.SpawnAttached(p, target.Pid)) return true;
+        ShowStillStarting(p);
         return true;
     }
 
-    /// <summary>The non-modal notice for a Launch while the app has no window yet.</summary>
-    private void ShowStillStarting(Profile p, StartupWatch? watch)
+    /// <summary>Opens the startup window of one of this window's launches, or brings it to the front.</summary>
+    private void ShowSplash(StartupWatch watch)
+    {
+        if (_shotDir != null) return;
+        if (_splashes.TryGetValue(watch, out var open) && !open.IsDisposed)
+        {
+            RuntimeInstance.BringToFront(open.Handle);
+            return;
+        }
+        var splash = new SplashForm(watch.Profile, watch, SplashForm.KeyFor(watch.Profile, _store.ResolveRuntime()),
+            anchor: WindowState == FormWindowState.Minimized ? null : Bounds, inTaskbar: false);
+        splash.FormClosed += (_, _) =>
+        {
+            if (_splashes.TryGetValue(watch, out var s) && s == splash) _splashes.Remove(watch);
+        };
+        _splashes[watch] = splash;
+        splash.Show();
+    }
+
+    private void CloseSplash(StartupWatch watch)
+    {
+        if (_splashes.Remove(watch, out var s) && !s.IsDisposed) s.Close();
+    }
+
+    /// <summary>
+    /// The non-modal notice for a Launch while an app started elsewhere has no window yet and its
+    /// runtime process cannot be followed (only its lock is visible).
+    /// </summary>
+    private void ShowStillStarting(Profile p)
     {
         var heading = $"{p.Name} is still starting.";
-        var body = "The first launch prepares the app and can take several minutes for large apps." +
-                   (watch != null ? $"\n\nNow: {watch.PhaseText}  ({watch.ElapsedText})" : "");
-        _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+        const string body = "The first launch prepares the app and can take several minutes for large apps.";
         if (_notice is { IsDisposed: false })
         {
             _notice.UpdateText(heading, body);
@@ -752,18 +791,21 @@ public sealed class MainForm : Form
         bool changed = false;
         foreach (var w in _starting.ToList())
         {
-            if (SafeExited(w.Launch.Process)) { _starting.Remove(w); changed = true; continue; } // OnProcessExited reports
+            var proc = w.Launch!.Process;
+            if (SafeExited(proc)) { _starting.Remove(w); changed = true; continue; } // OnProcessExited reports
             w.Poll();
-            if (RuntimeInstance.FindAppWindow(w.Launch.Process.Id) != IntPtr.Zero)
+            if (_splashes.TryGetValue(w, out var splash)) splash.RefreshPhase();
+            if (RuntimeInstance.FindAppWindow(proc.Id) != IntPtr.Zero)
             {
                 _starting.Remove(w);
+                CloseSplash(w);
                 opened = w;
                 changed = true;
             }
         }
         if (changed) RefreshAll();
         else UpdateUiState();
-        if (opened != null) _status.Text = $"‘{opened.Profile.Name}’ is running  •  log: {opened.Launch.LogPath}";
+        if (opened != null) _status.Text = $"‘{opened.Profile.Name}’ is running  •  log: {opened.Launch!.LogPath}";
         if (_starting.Count == 0) _startTimer.Stop();
     }
 
@@ -772,13 +814,22 @@ public sealed class MainForm : Form
         if (InvokeRequired) { try { BeginInvoke(() => OnProcessExited(lp)); } catch { } return; }
         var code = RuntimeLauncher.SafeExitCode(lp.Process);
         _starting.RemoveAll(w => w.Launch == lp);
+        // The startup window, if it is still open: the runtime exited before its first window.
+        var entry = _splashes.FirstOrDefault(kv => kv.Key.Launch == lp);
+        var splash = entry.Value;
+        if (splash != null) _splashes.Remove(entry.Key);
         RefreshAll();
         bool stopped = false;
         try { stopped = _stoppedPids.Remove(lp.Process.Id); } catch { }
+        bool showError = splash is { IsDisposed: false } && !stopped && code != 0 && code != RuntimeInstance.ExitAlreadyRunning;
+        if (showError) splash!.ShowExited(code, lp.LogPath);
+        else if (splash is { IsDisposed: false }) splash.Close();
+
         if (stopped) _status.Text = $"stopped ‘{lp.Profile.Name}’";
         else if (code == RuntimeInstance.ExitAlreadyRunning) ShowAlreadyRunning(lp);
-        // Any other non-zero exit is treated as a crashed launch.
-        else if (code != 0) ShowCrashed(lp, code);
+        // Any other non-zero exit is treated as a crashed launch; before its first window, the
+        // startup window says so (it has the log and the logs folder), else the crash message.
+        else if (code != 0 && !showError) ShowCrashed(lp, code);
     }
 
     /// <summary>Exit code 3: another runtime holds this app's folder. Offers Wait, Show it and Stop it.</summary>
@@ -990,12 +1041,7 @@ public sealed class MainForm : Form
     /// <summary>Opens the run logs folder in Explorer, with <paramref name="select"/> selected if it exists.</summary>
     private void OpenLogsFolder(string? select = null)
     {
-        try
-        {
-            Directory.CreateDirectory(RuntimeLauncher.LogsDir);
-            var args = select != null && File.Exists(select) ? $"/select,\"{select}\"" : $"\"{RuntimeLauncher.LogsDir}\"";
-            Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
-        }
+        try { ShellOpen.LogsFolder(select); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Open logs folder", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
@@ -1186,7 +1232,7 @@ public sealed class MainForm : Form
         // A modal dialog (Edit, a message box, a file picker) disables this window natively, without
         // changing Control.Enabled; wait until it closes.
         if (_pendingAdds.Count == 0) { _pendingTimer.Stop(); return; }
-        if (!IsHandleCreated || !IsWindowEnabled(Handle) || OwnedForms.Any(f => f != _notice)) { _pendingTimer.Start(); return; }
+        if (!IsHandleCreated || !IsWindowEnabled(Handle) || OwnedForms.Any(f => f != _notice && f is not SplashForm)) { _pendingTimer.Start(); return; }
         _pendingTimer.Stop();
         var path = _pendingAdds.Dequeue();
         AddProfile(path);
@@ -1216,11 +1262,7 @@ public sealed class MainForm : Form
 
     // ----- helpers -----
 
-    private static void OpenInNotepad(string path)
-    {
-        try { Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true }); }
-        catch { try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { } }
-    }
+    private static void OpenInNotepad(string path) => ShellOpen.InNotepad(path);
 
     private static Profile Clone(Profile p) => new()
     {

@@ -32,15 +32,30 @@ public sealed class StartupWatch
     private readonly StringBuilder _partial = new();
     private long _offset;
 
-    public StartupWatch(LaunchedProcess launch)
+    /// <summary>Follows a launch of this window.</summary>
+    public StartupWatch(LaunchedProcess launch) : this(launch.Profile, launch.LogPath, launch) { }
+
+    /// <summary>Follows any runtime of <paramref name="profile"/>, through its run log if there is one.</summary>
+    public StartupWatch(Profile profile, string? logPath, LaunchedProcess? launch = null)
     {
+        Profile = profile;
+        LogPath = logPath;
         Launch = launch;
-        StartedUtc = DateTime.UtcNow;
+        StartedUtc = launch != null ? DateTime.UtcNow : StartTimeOf(logPath) ?? DateTime.UtcNow;
     }
 
-    public LaunchedProcess Launch { get; }
-    public Profile Profile => Launch.Profile;
+    /// <summary>The launch this window started; null for a runtime started elsewhere.</summary>
+    public LaunchedProcess? Launch { get; }
+    public Profile Profile { get; }
+    public string? LogPath { get; }
     public DateTime StartedUtc { get; }
+
+    /// <summary>When a run log was created: the launch time of a runtime started elsewhere.</summary>
+    private static DateTime? StartTimeOf(string? logPath)
+    {
+        try { return logPath != null && File.Exists(logPath) ? File.GetCreationTimeUtc(logPath) : null; }
+        catch { return null; }
+    }
     public StartupPhase Phase { get; private set; } = StartupPhase.Starting;
 
     /// <summary>"1,234 classes in 3.0 s" once the code conversion has finished in this launch.</summary>
@@ -48,6 +63,14 @@ public sealed class StartupWatch
 
     /// <summary>The step as the status bar shows it.</summary>
     public string PhaseText => PhaseLabel(Phase);
+
+    /// <summary>The step as the startup window shows it.</summary>
+    public string SplashPhaseText => Phase switch
+    {
+        StartupPhase.Installing => "Installing the app…",
+        StartupPhase.Converting => "Converting the app's code — first launch only, large apps take a few minutes…",
+        _ => ConvertedSummary != null ? $"Starting… (code converted: {ConvertedSummary})" : "Starting…",
+    };
 
     public static string PhaseLabel(StartupPhase phase) => phase switch
     {
@@ -75,10 +98,11 @@ public sealed class StartupWatch
     /// <summary>Reads what the runtime appended since the last call. Returns true when the phase changed.</summary>
     public bool Poll()
     {
+        if (LogPath == null) return false;
         var before = (Phase, ConvertedSummary);
         try
         {
-            using var fs = new FileStream(Launch.LogPath, FileMode.Open, FileAccess.Read,
+            using var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.SequentialScan);
             if (fs.Length < _offset) { _offset = 0; _partial.Clear(); } // replaced: start over
             if (fs.Length == _offset) return false;

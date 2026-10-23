@@ -11,6 +11,10 @@ internal static class Program
         if (args.Length >= 2 && args[0].Equals("--proxy-adapter", StringComparison.OrdinalIgnoreCase))
             return ProxyAdapter.Run(args[1]);
 
+        // Hidden child process: the startup window of a --launch (see SplashProcess).
+        if (args.Length >= 3 && args[0].Equals("--splash", StringComparison.OrdinalIgnoreCase))
+            return SplashProcess.Run(args);
+
         if (args.Length > 0 && !IsGuiStart(args[0]))
             return Cli.Run(args);
 
@@ -123,11 +127,15 @@ internal static class Cli
                 return 0;
 
             case "--launch":
-                if (args.Length < 2) { Console.Error.WriteLine("usage: --launch <name|id> [-s N]"); return 2; }
+                if (args.Length < 2) { Console.Error.WriteLine("usage: --launch <name|id> [-s N] [--no-splash]"); return 2; }
                 int seconds = -1; // -1 = launch like the button and leave it running
-                for (int i = 2; i < args.Length - 1; i++)
-                    if (args[i] is "--seconds" or "-s" && int.TryParse(args[i + 1], out var n)) seconds = n;
-                return Launch(store, args[1], seconds);
+                bool noSplash = false;
+                for (int i = 2; i < args.Length; i++)
+                {
+                    if (args[i] is "--seconds" or "-s" && i + 1 < args.Length && int.TryParse(args[i + 1], out var n)) { seconds = n; i++; }
+                    else if (args[i].Equals("--no-splash", StringComparison.OrdinalIgnoreCase)) noSplash = true;
+                }
+                return Launch(store, args[1], seconds, noSplash || seconds >= 0);
 
             case "--dry-run":
                 if (args.Length < 2) { Console.Error.WriteLine("usage: --dry-run <name|id>"); return 2; }
@@ -158,8 +166,10 @@ internal static class Cli
                 Console.WriteLine("  --theme light|dark        open the GUI in a forced theme");
                 Console.WriteLine("  --screenshot <dir>        open the GUI, save tiles/list/edit captures, exit");
                 Console.WriteLine("  --list                    list profiles");
-                Console.WriteLine("  --launch <name>           launch a profile (proxy adapter included) and leave it running;");
+                Console.WriteLine("  --launch <name>           launch a profile (proxy adapter included) and leave it running,");
+                Console.WriteLine("                            with a startup window until the app's window opens;");
                 Console.WriteLine("                            if it already runs or is starting: start nothing, exit code 3");
+                Console.WriteLine("  --launch <name> --no-splash   the same without the startup window");
                 Console.WriteLine("  --launch <name> -s N      launch, watch N seconds, then close it (smoke test)");
                 Console.WriteLine("  --dry-run <name>          print the exe, args and env Launch would use (starts nothing)");
                 Console.WriteLine("  --test-proxy <name>       test the profile's proxy (same check as the Edit dialog)");
@@ -213,7 +223,7 @@ internal static class Cli
         return 0;
     }
 
-    private static int Launch(LauncherStore store, string nameOrId, int seconds)
+    private static int Launch(LauncherStore store, string nameOrId, int seconds, bool noSplash)
     {
         var p = store.Find(nameOrId);
         if (p == null) { Console.Error.WriteLine($"no such profile: {nameOrId}"); return 2; }
@@ -236,8 +246,16 @@ internal static class Cli
             else
             {
                 const string why = "The first launch prepares the app and can take several minutes for large apps.";
-                Console.WriteLine($"RESULT: {p.Name} is still starting{(pids.Length > 0 ? $" (pid {pids})" : "")}. {why} Nothing was started.");
-                if (!_hasConsole) ShowNotice($"{p.Name} is still starting.", why);
+                // Its startup window, or a new one that follows it; the plain notice only when the
+                // runtime process cannot be found (just its lock).
+                string how = "";
+                bool notice = false;
+                if (SplashForm.TryBringToFront(SplashForm.KeyFor(p, runtime))) how = " Brought its startup window to the front.";
+                else if (!noSplash && probe.Processes.Count > 0 && SplashProcess.SpawnAttached(p, probe.Processes[0].Pid))
+                    how = " Opened a startup window for it.";
+                else notice = !_hasConsole && !_redirected;
+                Console.WriteLine($"RESULT: {p.Name} is still starting{(pids.Length > 0 ? $" (pid {pids})" : "")}. {why}{how} Nothing was started.");
+                if (notice) ShowNotice($"{p.Name} is still starting.", why);
             }
             return RuntimeInstance.ExitAlreadyRunning;
         }
@@ -256,7 +274,10 @@ internal static class Cli
 
         if (seconds < 0)
         {
-            Console.WriteLine("RESULT: launched; leaving it running.");
+            // The startup window runs in its own detached process, so this one returns at once.
+            bool splash = !noSplash && SplashProcess.Spawn(p, lp.Process.SafeHandle, lp.LogPath);
+            Console.WriteLine(splash ? "RESULT: launched; leaving it running (a startup window shows its progress)."
+                                     : "RESULT: launched; leaving it running.");
             return 0;
         }
 
