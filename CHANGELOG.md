@@ -5,6 +5,33 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A Hebrew user interface. In Hebrew, the windows read right to left: the toolbar, the tiles,
+  the list and the dialogs are mirrored, while paths, addresses, ports and log lines stay left to
+  right.
+- A language setting: **…** > **Language / שפה** > **Automatic**, **English** or **עברית**.
+  **Automatic**, the default, follows the Windows display language. The window switches at once,
+  and `profiles.json` keeps the choice in a new `Language` field. `--lang` sets the language for
+  one run.
+- The installer asks for its language, English or Hebrew, and preselects the Windows display
+  language.
+- The window title shows the version, for example "WinApk Launcher 0.1.1". The startup window
+  shows it too, in small text.
+- The startup window shows the newest line of the run log, and its **Open log** link opens the
+  run log at any time, not only after a failed start.
+- When neither the run log nor the CPU time of the app's runtime has changed for 3 minutes, the
+  startup window says that the app might be stuck and offers **Open log** and **Stop**. **Stop**
+  asks first. When only the log is quiet and the CPU is busy, as in a long code conversion, it
+  says **Still working (CPU busy)…**.
+
+### Changed
+
+- The delete confirmation and the "runtime not found" question are now launcher dialogs, so
+  their buttons follow the launcher's language.
+
 ## [0.1.1] - 2026-10-23
 
 ### Fixed
@@ -65,5 +92,6 @@ The first release.
 - Bundled runtime: Google push goes through the app's proxy.
 - Bundled runtime: 29 UI fixes, found with two notes apps.
 
+[Unreleased]: https://github.com/5566brs/winapk-launcher/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/5566brs/winapk-launcher/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/5566brs/winapk-launcher/releases/tag/v0.1.0

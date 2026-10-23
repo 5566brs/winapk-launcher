@@ -1,5 +1,13 @@
 # WinApk Launcher
 
+<div dir="rtl" lang="he">
+
+**עברית:** הממשק של WinApk Launcher זמין גם בעברית, מימין לשמאל. כש-Windows מוצג בעברית הוא נפתח
+בעברית, ואפשר לבחור שפה בתפריט **…** ← **שפה / Language**. גם ההתקנה זמינה בעברית. פרטים בסעיף
+[Language](#language).
+
+</div>
+
 WinApk Launcher is a Windows launcher and manager for [Win.apk](https://github.com/israel2176/win.apk),
 a runtime that runs Android apps (APK files) on Windows 10 and 11 (x64). Each app gets a tile, its
 own settings, its own data folder and, if you want, its own network proxy.
@@ -35,6 +43,8 @@ For what changed in each release, see [CHANGELOG.md](CHANGELOG.md).
   **Proxy log** and the app's **Data folder**, and its **…** menu has **Open logs folder**. The
   right-click menu has **Create desktop shortcut**, which launches that app directly.
 - **Windows look.** Dark and light themes follow your Windows settings and accent color.
+- **English and Hebrew.** The windows are in English or Hebrew, right to left in Hebrew. See
+  [Language](#language).
 - **Command line.** `--list`, `--launch`, `--dry-run`, `--test-proxy` and more; see
   [Command line](#command-line).
 
@@ -63,6 +73,27 @@ The proxy doesn't cover:
 The launcher encrypts the proxy password with Windows DPAPI for your Windows account before it
 writes `profiles.json`, so the file never holds the password in plain text. Another Windows user
 can't decrypt it.
+
+## Language
+
+The launcher's windows are in English or Hebrew. By default, the launcher follows the Windows
+display language: Hebrew when Windows shows Hebrew, and English otherwise.
+
+To choose the language, select **…** > **Language / שפה** in the toolbar, then select
+**Automatic**, **English** or **עברית**. The window switches at once, and apps that are running or
+starting keep running. The launcher saves your choice in `profiles.json`, as `"Language": "auto"`,
+`"en"` or `"he"`.
+
+In Hebrew, the windows read right to left: the toolbar, the tiles, the list and the dialogs are
+mirrored. Paths, addresses, ports, JVM options and log lines stay left to right. Command-line
+output and the logs stay in English.
+
+![The tiles view in Hebrew: the tiles start at the top right, and the toolbar starts with "הפעל" at the right](docs/screenshot-tiles-he.png)
+
+The installer also comes in both languages. It asks which one to use, and it preselects the
+Windows display language.
+
+To add a language, see the comment at the top of [`src/Strings.cs`](src/Strings.cs).
 
 ## Install
 
@@ -97,11 +128,20 @@ as WhatsApp. Later launches skip these steps.
 From the moment you launch an app, from the launcher, a desktop shortcut or `--launch`, a small
 startup window shows the app's icon and name, a progress bar, the time so far and the current
 step: **Installing the app…**, **Converting the app's code — first launch only, large apps take a
-few minutes…** or **Starting…**. The window closes when the app's window opens. If the app exits
-before that, the startup window says so and offers **Open log** and **Open logs folder**. To close
-only the startup window and let the app keep starting, select **Hide**.
+few minutes…** or **Starting…**. Under the step, it shows the newest line of the run log. The
+window closes when the app's window opens. If the app exits before that, the startup window says
+so and offers **Open log** and **Open logs folder**.
 
-![The startup window: "PF Notes", "Starting…" with a progress bar, 0:43, and "Converting the app's code — first launch only, large apps take a few minutes…"](docs/screenshot-splash.png)
+- To open the run log while the app starts, select **Open log**.
+- To close only the startup window and let the app keep starting, select **Hide**.
+
+![The startup window: "PF Notes (via SOCKS5)", "Starting…" with a progress bar, 0:43, "Converting the app's code — first launch only, large apps take a few minutes…" and the newest log line](docs/screenshot-splash.png)
+
+If neither the run log nor the CPU time of the app's runtime has changed for 3 minutes, the
+startup window says that the app might be stuck, and offers **Open log** and **Stop**. **Stop**
+asks first, then ends the runtime, like **Stop it** does. A long code conversion can keep the
+log quiet for minutes while it keeps the CPU busy. In that case, the window says **Still working
+(CPU busy)…** instead.
 
 In the launcher, the app's tile also shows **Starting…** with a small spinner, and the status bar
 shows the step.
@@ -180,7 +220,8 @@ When you launch an app, the launcher looks for `winapk-runtime.exe` in this orde
 | `--self-test` | Runs the launcher's built-in checks. The build workflow runs it on every push. |
 | `--icon <package> [out.png]` | Traces the icon extraction for a package. |
 | `--theme light` or `--theme dark` | Opens the launcher in that theme. |
-| `--screenshot <folder>` | Opens the launcher, saves captures of its views and the Edit dialog to the folder, and exits. It never launches an app. |
+| `--lang auto`, `--lang en` or `--lang he` | Opens the launcher in that language for this run. It doesn't change the saved setting. |
+| `--screenshot <folder>` | Opens the launcher, saves captures of its views, the Edit dialog, two messages and the startup window to the folder, and exits. It never launches an app. |
 | `--version` | Prints the version. |
 
 ## Build from source
