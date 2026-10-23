@@ -11,6 +11,9 @@
 ;   launcher looks for runtime\bin\winapk-runtime.exe.
 ; AppVersion:  defaults to the ProductVersion of WinApkLauncher.exe.
 ;
+; Two languages, English and Hebrew (compiler:Languages\Hebrew.isl, which Inno Setup 6 ships): Setup
+; asks, with the Windows display language preselected. This file is UTF-8.
+;
 ; Installs per user (no administrator rights) to %LOCALAPPDATA%\Programs\WinApk Launcher.
 ; Uninstalling removes the program files only: the settings (%APPDATA%\WinApk Launcher) and the
 ; apps' data, cache and logs (%LOCALAPPDATA%\WinApk Launcher) are kept.
@@ -72,14 +75,40 @@ SolidCompression=yes
 ChangesAssociations=yes
 CloseApplications=yes
 RestartApplications=no
+ShowLanguageDialog=yes
+LanguageDetectionMethod=uilanguage
+
+[Languages]
+Name: "en"; MessagesFile: "compiler:Default.isl"
+Name: "he"; MessagesFile: "compiler:Languages\Hebrew.isl"
 
 [Messages]
-ConfirmUninstall=Remove %1 from your computer?%n%nYour settings and your apps' data are kept.
-UninstalledAll=%1 was removed from your computer.%n%nYour settings and your apps' data were kept, in:%n  AppData\Roaming\WinApk Launcher  (settings)%n  AppData\Local\WinApk Launcher  (apps' data, cache, logs)%n%nDelete those folders if you want to remove them as well.
+en.ConfirmUninstall=Remove %1 from your computer?%n%nYour settings and your apps' data are kept.
+en.UninstalledAll=%1 was removed from your computer.%n%nYour settings and your apps' data were kept, in:%n  AppData\Roaming\WinApk Launcher  (settings)%n  AppData\Local\WinApk Launcher  (apps' data, cache, logs)%n%nDelete those folders if you want to remove them as well.
+he.ConfirmUninstall=להסיר את %1 מהמחשב?%n%nההגדרות והנתונים של האפליקציות נשמרים.
+he.UninstalledAll=%1 הוסר מהמחשב.%n%nההגדרות והנתונים של האפליקציות נשמרו בתיקיות:%n  AppData\Roaming\WinApk Launcher  (הגדרות)%n  AppData\Local\WinApk Launcher  (נתוני האפליקציות, מטמון, יומנים)%n%nאפשר למחוק את התיקיות האלה כדי להסיר גם אותן.
+
+[CustomMessages]
+en.TaskDesktop=Create a &desktop shortcut
+en.GroupShortcuts=Shortcuts:
+en.TaskFileAssoc=Add "Open with WinApk Launcher" to .apk and .xapk files (opens the Add dialog with the file)
+en.GroupFileTypes=File types:
+en.ShortcutComment=Run Android apps on Windows with Win.apk
+en.OpenWith=Open with WinApk Launcher
+en.PackageType=Android app package
+en.RunAfter=Open %1
+he.TaskDesktop=צור קיצור דרך ב&שולחן העבודה
+he.GroupShortcuts=קיצורי דרך:
+he.TaskFileAssoc=הוסף "פתח באמצעות WinApk Launcher" לקובצי APK ו-XAPK (פותח את חלון ההוספה עם הקובץ)
+he.GroupFileTypes=סוגי קבצים:
+he.ShortcutComment=הרצת אפליקציות Android ב-Windows עם Win.apk
+he.OpenWith=פתח באמצעות WinApk Launcher
+he.PackageType=חבילת אפליקציה של Android
+he.RunAfter=פתח את %1
 
 [Tasks]
-Name: desktopicon; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
-Name: fileassoc; Description: "Add ""Open with WinApk Launcher"" to .apk and .xapk files (opens the Add dialog with the file)"; GroupDescription: "File types:"; Flags: unchecked
+Name: desktopicon; Description: "{cm:TaskDesktop}"; GroupDescription: "{cm:GroupShortcuts}"; Flags: unchecked
+Name: fileassoc; Description: "{cm:TaskFileAssoc}"; GroupDescription: "{cm:GroupFileTypes}"; Flags: unchecked
 
 [InstallDelete]
 ; A new version brings its whole runtime; no stale jars or DLLs from the previous one.
@@ -93,17 +122,17 @@ Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreve
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Run Android apps on Windows with Win.apk"; Check: not WizardNoIcons
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Run Android apps on Windows with Win.apk"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "{cm:ShortcutComment}"; Check: not WizardNoIcons
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "{cm:ShortcutComment}"; Tasks: desktopicon
 
 [Registry]
 ; "Open with WinApk Launcher" for .apk and .xapk (optional task). The launcher is offered in the
 ; Open with list and as a right-click command; it does not take over the default app for these
 ; files (another program, such as Win.apk's own library, may own that).
-Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package"; ValueType: string; ValueName: ""; ValueData: "Android app package"; Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package"; ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "Android app package"; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package"; ValueType: string; ValueName: ""; ValueData: "{cm:PackageType}"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package"; ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "{cm:PackageType}"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"",0"; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package\shell\open"; ValueType: string; ValueName: ""; ValueData: "Open with WinApk Launcher"; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package\shell\open"; ValueType: string; ValueName: ""; ValueData: "{cm:OpenWith}"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\WinApkLauncher.Package\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: fileassoc
 
 Root: HKA; Subkey: "Software\Classes\.apk"; Flags: uninsdeletekeyifempty; Tasks: fileassoc
@@ -118,12 +147,12 @@ Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\shell\open\command";
 
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk"; Flags: uninsdeletekeyifempty; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk\shell"; Flags: uninsdeletekeyifempty; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "MUIVerb"; ValueData: "Open with WinApk Launcher"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "MUIVerb"; ValueData: "{cm:OpenWith}"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.apk\shell\WinApkLauncher.Add\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk"; Flags: uninsdeletekeyifempty; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell"; Flags: uninsdeletekeyifempty; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "MUIVerb"; ValueData: "Open with WinApk Launcher"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "MUIVerb"; ValueData: "{cm:OpenWith}"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell\WinApkLauncher.Add"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell\WinApkLauncher.Add\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: fileassoc
 
@@ -132,4 +161,4 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.xapk\shell\WinApkLa
 Type: filesandordirs; Name: "{app}\runtime"
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Open {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Description: "{cm:RunAfter,{#AppName}}"; Flags: nowait postinstall skipifsilent

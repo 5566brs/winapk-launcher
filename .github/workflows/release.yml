@@ -187,6 +187,8 @@ jobs:
           if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup checksum mismatch: $hash" }
           $dir = Join-Path $env:RUNNER_TEMP 'innosetup'
           Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', "/DIR=$dir" -Wait
+          # The installer's second language (installer\WinApkLauncher.iss [Languages]).
+          if (-not (Test-Path "$dir\Languages\Hebrew.isl")) { throw 'Inno Setup has no Languages\Hebrew.isl' }
           & "$dir\ISCC.exe" "/DLauncherDir=$PWD\publish" "/DRuntimeDir=$PWD\winapk\Win.apk" "/DAppVersion=$env:VERSION" `
             "/O$PWD\dist" installer\WinApkLauncher.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
