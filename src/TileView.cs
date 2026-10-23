@@ -22,7 +22,9 @@ public sealed class TileMenuEventArgs : EventArgs
 /// Desktop-style grid of app tiles (large icon + name) ending with an "Add app" tile.
 /// Owner-drawn. Click selects, double-click / Enter activates, right-click / Apps key /
 /// Shift+F10 asks for a context menu, arrows / Home / End / PgUp / PgDn move, typing
-/// jumps to a matching name.
+/// jumps to a matching name. With RightToLeft = Yes (Hebrew) the grid is mirrored: the tiles
+/// flow from the top right, the badges sit on the mirrored corners, and Left / Right follow
+/// what you see.
 /// </summary>
 internal sealed class TileView : ScrollableControl
 {
@@ -50,9 +52,6 @@ internal sealed class TileView : ScrollableControl
     public Func<Profile, bool>? HasProxy { get; set; }
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<Profile, string>? TooltipProvider { get; set; }
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    public string Header { get; set; } = "Apps";
-
     public event EventHandler? SelectionChanged;
     public event EventHandler<Profile>? Activated;
     public event EventHandler? AddRequested;
@@ -66,8 +65,20 @@ internal sealed class TileView : ScrollableControl
         TabStop = true;
         AutoScroll = true;
         AccessibleRole = AccessibleRole.List;
-        AccessibleName = "Apps";
+        AccessibleName = L.AppsHeader;
     }
+
+    /// <summary>Mirrored layout: the control reads right to left.</summary>
+    private bool Rtl => RightToLeft == RightToLeft.Yes;
+
+    /// <summary>The arrow key that moves to the next tile on screen (Right, or Left when mirrored).</summary>
+    internal Keys NextKey => Rtl ? Keys.Left : Keys.Right;
+    internal Keys PreviousKey => Rtl ? Keys.Right : Keys.Left;
+
+    /// <summary>A rectangle laid out left to right, placed where it shows: mirrored in RTL.</summary>
+    private Rectangle Mirror(Rectangle r) => Rtl ? new Rectangle(ClientSize.Width - r.Right, r.Y, r.Width, r.Height) : r;
+
+    private TextFormatFlags Direction => Rtl ? TextFormatFlags.RightToLeft : TextFormatFlags.Default;
 
     // ----- data -----
 
@@ -100,9 +111,6 @@ internal sealed class TileView : ScrollableControl
     /// <summary>Repaint after icons / running state changed.</summary>
     public void RefreshTiles() { PruneCaches(); Invalidate(); }
 
-    /// <summary>The label under a starting app's name.</summary>
-    public const string StartingLabel = "Starting…";
-
     private int _spinFrame;
 
     /// <summary>Advance the "starting" spinner one step and repaint only the starting tiles.</summary>
@@ -116,15 +124,18 @@ internal sealed class TileView : ScrollableControl
 
     private Rectangle IconRect(Rectangle tile) => new(tile.X + (tile.Width - IconPx) / 2, tile.Y + S(16), IconPx, IconPx);
 
-    /// <summary>The spinner badge: the icon's bottom-right corner, like the proxy badge at the top right.</summary>
+    /// <summary>The spinner badge: the icon's bottom-right corner (bottom-left in RTL), like the proxy badge at the top.</summary>
     private Rectangle SpinnerRect(Rectangle tile)
     {
         var ir = IconRect(tile);
         int bd = S(22);
-        var r = new Rectangle(ir.Right - bd + S(4), ir.Bottom - bd + S(4), bd, bd);
+        var r = new Rectangle(BadgeX(ir, bd), ir.Bottom - bd + S(4), bd, bd);
         r.Inflate(S(2), S(2));
         return r;
     }
+
+    /// <summary>The x of a badge on the icon's outer corner: right in LTR, left in RTL.</summary>
+    private int BadgeX(Rectangle icon, int size) => Rtl ? icon.Left - S(4) : icon.Right - size + S(4);
 
     /// <summary>For --screenshot: show a hover highlight on a tile without a mouse.</summary>
     internal void SimulateHover(int index) { _hover = index; Invalidate(); }
@@ -155,12 +166,13 @@ internal sealed class TileView : ScrollableControl
         int cols = Columns;
         int x = PadX + i % cols * (TileW + Gap);
         int y = PadTop + i / cols * (TileH + Gap) + (scrolled ? AutoScrollPosition.Y : 0);
-        return new Rectangle(x, y, TileW, TileH);
+        return Mirror(new Rectangle(x, y, TileW, TileH));
     }
 
     private int HitTest(Point p)
     {
         int cols = Columns;
+        if (Rtl) p = new Point(ClientSize.Width - 1 - p.X, p.Y); // back to the left-to-right grid
         int x = p.X - PadX, y = p.Y - AutoScrollPosition.Y - PadTop;
         if (x < 0 || y < 0) return -1;
         int col = x / (TileW + Gap), row = y / (TileH + Gap);
@@ -215,14 +227,17 @@ internal sealed class TileView : ScrollableControl
         var g = e.Graphics;
         g.Clear(t.Content);
 
+        // "Apps" and the count: at the left, or at the right with the count to its left in RTL.
         int y0 = AutoScrollPosition.Y;
-        var hp = new Point(PadX, y0 + S(16));
-        TextRenderer.DrawText(g, Header, HeaderFont, hp, t.Text, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
-        var hs = TextRenderer.MeasureText(g, Header, HeaderFont, Size.Empty, TextFormatFlags.NoPadding);
-        var count = _items.Count == 1 ? "1 app" : $"{_items.Count} apps";
-        var cs = TextRenderer.MeasureText(g, count, Font, Size.Empty, TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(g, count, Font, new Point(hp.X + hs.Width + S(10), hp.Y + hs.Height - cs.Height - S(1)),
-            t.SubText, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+        var header = L.AppsHeader;
+        var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | Direction;
+        var hs = TextRenderer.MeasureText(g, header, HeaderFont, Size.Empty, flags);
+        var count = L.AppCount(_items.Count);
+        var cs = TextRenderer.MeasureText(g, count, Font, Size.Empty, flags);
+        var hr = Mirror(new Rectangle(PadX, y0 + S(16), hs.Width, hs.Height));
+        var cr = Mirror(new Rectangle(PadX + hs.Width + S(10), hr.Y + hs.Height - cs.Height - S(1), cs.Width, cs.Height));
+        TextRenderer.DrawText(g, header, HeaderFont, hr, t.Text, flags);
+        TextRenderer.DrawText(g, count, Font, cr, t.SubText, flags);
 
         for (int i = 0; i < Count; i++)
         {
@@ -237,28 +252,26 @@ internal sealed class TileView : ScrollableControl
     }
 
     /// <summary>Shown under the Add tile while there are no profiles yet.</summary>
-    public const string EmptyTitle = "No apps yet";
-    public const string EmptyHint = "Drag an .apk or .xapk here, or click Add app.";
-
     private void DrawEmptyState(Graphics g, Theme t)
     {
         int top = TileRect(0).Bottom + S(24);
         int areaH = ClientSize.Height - top - PadBottom;
         using var titleFont = new Font(t.SemiboldFamily, Font.SizeInPoints * 12f / 9f);
-        const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
-        var ts = TextRenderer.MeasureText(g, EmptyTitle, titleFont, Size.Empty, flags);
-        var hs = TextRenderer.MeasureText(g, EmptyHint, Font, Size.Empty, flags);
+        var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | Direction;
+        string title = L.EmptyTitle, hint = L.EmptyHint;
+        var ts = TextRenderer.MeasureText(g, title, titleFont, Size.Empty, flags);
+        var hs = TextRenderer.MeasureText(g, hint, Font, Size.Empty, flags);
         int glyphPx = S(48);
         int blockH = glyphPx + S(16) + ts.Height + S(6) + hs.Height;
         int y = top + Math.Max(0, (areaH - blockH) / 2);
         int cx = ClientSize.Width / 2;
 
-        using (var glyph = t.Glyph('', glyphPx, Theme.Blend(t.SubText, t.Content, 0.35f))) // Package
+        using (var glyph = t.Glyph('\uE7B8', glyphPx, Theme.Blend(t.SubText, t.Content, 0.35f))) // Package
             g.DrawImage(glyph, cx - glyphPx / 2, y);
         y += glyphPx + S(16);
-        TextRenderer.DrawText(g, EmptyTitle, titleFont, new Point(cx - ts.Width / 2, y), t.Text, flags);
+        TextRenderer.DrawText(g, title, titleFont, new Rectangle(cx - ts.Width / 2, y, ts.Width, ts.Height), t.Text, flags);
         y += ts.Height + S(6);
-        TextRenderer.DrawText(g, EmptyHint, Font, new Point(cx - hs.Width / 2, y), t.SubText, flags);
+        TextRenderer.DrawText(g, hint, Font, new Rectangle(cx - hs.Width / 2, y, hs.Width, hs.Height), t.SubText, flags);
     }
 
     private void DrawTile(Graphics g, int i, Rectangle r, Theme t)
@@ -292,11 +305,12 @@ internal sealed class TileView : ScrollableControl
 
         var ir = IconRect(r);
         string label;
+        var labelDirection = Direction; // a name gets its own: Hebrew reads right to left, English left to right
         bool starting = false;
         Color textColor = t.Text;
         if (isAdd)
         {
-            label = "Add app";
+            label = L.TileAdd;
             textColor = hov || sel ? t.Text : t.SubText;
             var ar = new RectangleF(ir.X + S(4) + 0.5f, ir.Y + S(4) + 0.5f, ir.Width - S(8) - 1f, ir.Height - S(8) - 1f);
             using (var path = Theme.RoundRect(ar, ir.Width * 0.2f))
@@ -312,6 +326,7 @@ internal sealed class TileView : ScrollableControl
         {
             var p = _items[i];
             label = p.Name;
+            labelDirection = L.StartsRtl(p.Name) ? TextFormatFlags.RightToLeft : TextFormatFlags.Default;
             Image? icon = null;
             try { icon = IconProvider?.Invoke(p); } catch { }
             var bmp = icon != null ? ScaledIcon(icon, IconPx) : LetterIcon(p.Name, IconPx);
@@ -319,9 +334,9 @@ internal sealed class TileView : ScrollableControl
 
             if (HasProxy?.Invoke(p) == true)
             {
-                // A small accent badge with a globe glyph at the icon's top-right corner.
+                // A small accent badge with a globe glyph at the icon's top-right corner (top-left in RTL).
                 int bd = S(22);
-                var br = new Rectangle(ir.Right - bd + S(4), ir.Top - S(4), bd, bd);
+                var br = new Rectangle(BadgeX(ir, bd), ir.Top - S(4), bd, bd);
                 using (var path = Theme.RoundRect(br, bd / 2f))
                 {
                     using var halo = new SolidBrush(t.Content);
@@ -350,16 +365,16 @@ internal sealed class TileView : ScrollableControl
         if (starting)
         {
             // One line of name, then "Starting…".
-            const TextFormatFlags one = TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.SingleLine |
-                                        TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
-            TextRenderer.DrawText(g, label, Font, new Rectangle(tr.X, tr.Y, tr.Width, LineHeight), textColor, one);
-            TextRenderer.DrawText(g, StartingLabel, Font, new Rectangle(tr.X, tr.Y + LineHeight, tr.Width, LineHeight + S(2)),
-                t.Dark ? Theme.Blend(t.Accent, Color.White, 0.35f) : t.Accent, one);
+            var one = TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.SingleLine |
+                      TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+            TextRenderer.DrawText(g, label, Font, new Rectangle(tr.X, tr.Y, tr.Width, LineHeight), textColor, one | labelDirection);
+            TextRenderer.DrawText(g, L.TileStarting, Font, new Rectangle(tr.X, tr.Y + LineHeight, tr.Width, LineHeight + S(2)),
+                t.Dark ? Theme.Blend(t.Accent, Color.White, 0.35f) : t.Accent, one | Direction);
             return;
         }
         TextRenderer.DrawText(g, label, Font, tr, textColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak |
-            TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix);
+            TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix | labelDirection);
     }
 
     /// <summary>A small badge with a faint ring and a rotating accent arc.</summary>
@@ -475,7 +490,7 @@ internal sealed class TileView : ScrollableControl
         {
             _tipFor = i;
             string? text = i >= 0 && i < _items.Count ? TooltipProvider?.Invoke(_items[i]) ?? _items[i].Name
-                : i == _items.Count ? "Add an app (or drop an .apk / .xapk here)" : null;
+                : i == _items.Count ? L.TileAddTip : null;
             _tip.SetToolTip(this, text);
         }
     }
@@ -513,7 +528,9 @@ internal sealed class TileView : ScrollableControl
         int visibleRows = Math.Max(1, ClientSize.Height / (TileH + Gap));
         int cur = _selected < 0 ? 0 : _selected;
         int target = -1;
-        switch (e.KeyCode)
+        // Left and Right move the way the tiles are drawn: mirrored in RTL.
+        var key = Rtl && e.KeyCode is Keys.Left or Keys.Right ? (e.KeyCode == Keys.Left ? Keys.Right : Keys.Left) : e.KeyCode;
+        switch (key)
         {
             case Keys.Left: target = cur - 1; break;
             case Keys.Right: target = cur + 1; break;
@@ -539,7 +556,7 @@ internal sealed class TileView : ScrollableControl
         }
         e.Handled = true;
         _keyboardCues = true;
-        if (target < 0) target = e.KeyCode == Keys.Left ? 0 : cur;
+        if (target < 0) target = key == Keys.Left ? 0 : cur;
         if (target >= Count)
             target = cur / cols < (Count - 1) / cols ? Count - 1 : cur; // move into a short last row
         Select(target, ensureVisible: true);
@@ -574,6 +591,13 @@ internal sealed class TileView : ScrollableControl
         var r = TileRect(_selected);
         var pt = PointToScreen(new Point(r.X + r.Width / 2, r.Y + r.Height / 2));
         MenuRequested?.Invoke(this, new TileMenuEventArgs(SelectedProfile, AddTileSelected, pt));
+    }
+
+    protected override void OnRightToLeftChanged(EventArgs e)
+    {
+        base.OnRightToLeftChanged(e);
+        _tipFor = -2;
+        Invalidate();
     }
 
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }

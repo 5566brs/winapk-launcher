@@ -510,6 +510,6 @@ internal sealed class ThemedButton : Button
         g.SmoothingMode = SmoothingMode.Default;
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, text,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
-            TextFormatFlags.EndEllipsis);
+            TextFormatFlags.EndEllipsis | (RightToLeft == RightToLeft.Yes ? TextFormatFlags.RightToLeft : 0));
     }
 }

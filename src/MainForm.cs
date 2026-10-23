@@ -4,7 +4,8 @@ namespace WinApkLauncher;
 
 /// <summary>
 /// The launcher window: app tiles (default) or a detail list of profiles, a toolbar
-/// with every action, context menus, and a status bar.
+/// with every action, context menus, and a status bar. Its strings come from <see cref="L"/>;
+/// choosing another language in the "…" menu rebuilds the window in place.
 /// </summary>
 public sealed class MainForm : Form
 {
@@ -35,6 +36,7 @@ public sealed class MainForm : Form
     private ToolStripButton _launchBtn = null!, _addBtn = null!, _editBtn = null!, _dupBtn = null!, _delBtn = null!;
     private ToolStripButton _logBtn = null!, _folderBtn = null!, _runtimeBtn = null!, _tilesBtn = null!, _listBtn = null!;
     private ToolStripButton _proxyLogBtn = null!;
+    private ToolStripMenuItem _langMenu = null!;
     private ToolStripMenuItem _miTiles = null!, _miList = null!, _miProxyLogItem = null!;
     private readonly List<ToolStripItem> _needsSelection = new();
 
@@ -43,7 +45,8 @@ public sealed class MainForm : Form
     private bool _syncing;
     private Icon? _windowIcon;
 
-    // --screenshot <dir>: capture tiles, list and the Edit dialog, then exit. Nothing is saved.
+    // --screenshot <dir>: capture the views, the Edit dialog, two messages and the startup window,
+    // then exit. Nothing is saved and nothing is launched.
     private readonly string? _shotDir;
     private readonly string _shotSuffix;
     private Action<Form>? _dialogShownHook;
@@ -56,16 +59,18 @@ public sealed class MainForm : Form
     private readonly Label _listEmpty = new();
 
     /// <param name="addPath">A package to open the Add dialog with once the window is shown.</param>
-    public MainForm(string? screenshotDir = null, string shotSuffix = "", string? addPath = null)
+    /// <param name="language">--lang: a language for this run instead of the saved setting (not saved).</param>
+    public MainForm(string? screenshotDir = null, string shotSuffix = "", string? addPath = null, string? language = null)
     {
         _shotDir = screenshotDir;
         _shotSuffix = shotSuffix;
         _store = LauncherStore.Load();
+        L.Apply(language ?? _store.Language);
 
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = AppInfo.ProductName;
+        Text = L.MainTitle;
         ClientSize = new Size(980, 600);
         MinimumSize = new Size(700, 440);
         StartPosition = FormStartPosition.CenterScreen;
@@ -73,9 +78,12 @@ public sealed class MainForm : Form
         BackColor = _t.Content;
         ForeColor = _t.Text;
         AllowDrop = true;
+        L.ApplyDirection(this);
 
-        BuildToolbar();
-        BuildMenus();
+        SetUpToolbar();
+        SetUpMenus();
+        BuildToolbarItems();
+        BuildMenuItems();
         BuildTiles();
         BuildList();
         BuildStatusBar();
@@ -116,7 +124,7 @@ public sealed class MainForm : Form
     // UI construction
     // =====================================================================
 
-    private void BuildToolbar()
+    private void SetUpToolbar()
     {
         _toolbar.GripStyle = ToolStripGripStyle.Hidden;
         _toolbar.Renderer = new ThemedRenderer(_t);
@@ -126,7 +134,20 @@ public sealed class MainForm : Form
         _toolbar.ShowItemToolTips = true;
         _toolbar.CanOverflow = true;
         _toolbar.Stretch = true;
-        _toolbar.AccessibleName = "Actions";
+    }
+
+    /// <summary>The toolbar's buttons, in the current language. Runs again after a language change.</summary>
+    private void BuildToolbarItems()
+    {
+        foreach (var old in _toolbar.Items.Cast<ToolStripItem>().ToList())
+        {
+            old.Image?.Dispose();
+            old.Dispose();
+        }
+        _toolbar.Items.Clear();
+        _needsSelection.Clear();
+        _toolbar.AccessibleName = L.ToolbarName;
+        _toolbar.OverflowButton.AccessibleName = _toolbar.OverflowButton.ToolTipText = L.MoreOptions;
 
         ToolStripButton Btn(string text, char glyph, string tip, Action onClick,
             bool accent = false, ToolStripItemAlignment align = ToolStripItemAlignment.Left)
@@ -153,28 +174,29 @@ public sealed class MainForm : Form
             return s;
         }
 
-        _launchBtn = Btn("Launch", '\uE768', "Launch the selected app (Enter)", LaunchSelected, accent: true);
+        // In a right-to-left language the ToolStrip mirrors itself: "Left" items start at the right.
+        _launchBtn = Btn(L.Launch, '\uE768', L.LaunchTip, LaunchSelected, accent: true);
         Sep();
-        _addBtn = Btn("Add app", '\uE710', "Add an app profile (Ctrl+N). You can also drop an .apk / .xapk on the window.", () => AddProfile());
-        _editBtn = Btn("Edit", '\uE70F', "Edit the selected profile (F2)", EditSelected);
-        _dupBtn = Btn("Duplicate", '\uE8C8', "Duplicate the selected profile (Ctrl+D)", DuplicateSelected);
-        _delBtn = Btn("Delete", '\uE74D', "Delete the selected profile (Del). The data root on disk is kept.", DeleteSelected);
+        _addBtn = Btn(L.AddApp, '\uE710', L.AddAppTip, () => AddProfile());
+        _editBtn = Btn(L.Edit, '\uE70F', L.EditTip, EditSelected);
+        _dupBtn = Btn(L.Duplicate, '\uE8C8', L.DuplicateTip, DuplicateSelected);
+        _delBtn = Btn(L.Delete, '\uE74D', L.DeleteTip, DeleteSelected);
         Sep();
-        _logBtn = Btn("Run log", '\uE9F9', "Open the last run log (Ctrl+L)", OpenLastLog);
-        _folderBtn = Btn("Data folder", '\uE838', "Open the selected profile's data folder", OpenDataFolder);
-        _proxyLogBtn = Btn("Proxy log", '\uE774', "Open the per-app network proxy log", OpenProxyLog);
+        _logBtn = Btn(L.RunLog, '\uE9F9', L.RunLogTip, OpenLastLog);
+        _folderBtn = Btn(L.DataFolder, '\uE838', L.DataFolderTip, OpenDataFolder);
+        _proxyLogBtn = Btn(L.ProxyLog, '\uE774', L.ProxyLogTip, OpenProxyLog);
 
-        // Right-aligned items are laid out from the right edge in collection order.
-        _listBtn = Btn("List", '\uE8FD', "List view (Ctrl+2)", () => SetViewMode(tiles: false), align: ToolStripItemAlignment.Right);
-        _tilesBtn = Btn("Tiles", '\uECA5', "Tiles view (Ctrl+1)", () => SetViewMode(tiles: true), align: ToolStripItemAlignment.Right);
+        // Right-aligned items are laid out from the far edge in collection order.
+        _listBtn = Btn(L.ViewList, '\uE8FD', L.ViewListTip, () => SetViewMode(tiles: false), align: ToolStripItemAlignment.Right);
+        _tilesBtn = Btn(L.ViewTiles, '\uECA5', L.ViewTilesTip, () => SetViewMode(tiles: true), align: ToolStripItemAlignment.Right);
         Sep(ToolStripItemAlignment.Right);
-        _runtimeBtn = Btn("Runtime path…", '\uE713', RuntimeTooltip(), () => EditRuntimePath(),
+        _runtimeBtn = Btn(L.RuntimePath, '\uE713', RuntimeTooltip(), () => EditRuntimePath(),
             align: ToolStripItemAlignment.Right);
         // Always in the "…" overflow menu.
-        var logs = Btn("Open logs folder", '\uE8B7', "Open the folder with the run logs:\n" + RuntimeLauncher.LogsDir,
-            () => OpenLogsFolder());
+        var logs = Btn(L.OpenLogsFolder, '\uE8B7', L.OpenLogsFolderTip(RuntimeLauncher.LogsDir), () => OpenLogsFolder());
         logs.Overflow = ToolStripItemOverflow.Always;
-        var about = Btn($"About {AppInfo.ProductName}", '\uE946', $"{AppInfo.ProductName} {AppInfo.Version}", ShowAbout);
+        BuildLanguageMenu();
+        var about = Btn(L.About, '\uE946', L.MainTitle, ShowAbout);
         about.Overflow = ToolStripItemOverflow.Always;
 
         // When the window is narrow, the secondary buttons go to the "…" overflow first.
@@ -183,7 +205,31 @@ public sealed class MainForm : Form
         _needsSelection.AddRange(new ToolStripItem[] { _launchBtn, _editBtn, _dupBtn, _delBtn, _folderBtn, _proxyLogBtn });
     }
 
-    private void BuildMenus()
+    /// <summary>"Language / שפה" in the "…" menu: Automatic, then each language by its own name.</summary>
+    private void BuildLanguageMenu()
+    {
+        _langMenu = new ToolStripMenuItem(L.LanguageMenu) { Overflow = ToolStripItemOverflow.Always };
+        var current = L.NormalizeSetting(_store.Language);
+        var choices = new List<(string Setting, string Text)> { (L.Auto, L.LanguageAuto) };
+        choices.AddRange(L.Languages.Select(l => (l.Code, l.NativeName)));
+        foreach (var (setting, text) in choices)
+        {
+            var mi = new ToolStripMenuItem(text) { Checked = setting == current };
+            // After the menu has closed: the rebuild disposes this item.
+            mi.Click += (_, _) => BeginInvoke(() => SetLanguage(setting));
+            _langMenu.DropDownItems.Add(mi);
+        }
+        var dd = _langMenu.DropDown;
+        dd.Renderer = new ThemedRenderer(_t);
+        dd.BackColor = _t.MenuBack;
+        dd.ForeColor = _t.Text;
+        dd.RightToLeft = L.Rtl ? RightToLeft.Yes : RightToLeft.No;
+        dd.HandleCreated += (s, _) => Theme.RoundCorners(((Control)s!).Handle);
+        _toolbar.Items.Add(_langMenu);
+        _glyphItems.Add((_langMenu, '\uF2B7', false)); // LocaleLanguage
+    }
+
+    private void SetUpMenus()
     {
         foreach (var m in new[] { _itemMenu, _spaceMenu })
         {
@@ -193,6 +239,21 @@ public sealed class MainForm : Form
             m.ForeColor = _t.Text;
             m.ShowImageMargin = true;
             m.HandleCreated += (s, _) => Theme.RoundCorners(((Control)s!).Handle);
+        }
+    }
+
+    /// <summary>The context menus' items, in the current language. Runs again after a language change.</summary>
+    private void BuildMenuItems()
+    {
+        foreach (var m in new[] { _itemMenu, _spaceMenu })
+        {
+            foreach (var old in m.Items.Cast<ToolStripItem>().ToList())
+            {
+                old.Image?.Dispose();
+                old.Dispose();
+            }
+            m.Items.Clear();
+            m.RightToLeft = L.Rtl ? RightToLeft.Yes : RightToLeft.No;
         }
 
         ToolStripMenuItem Item(ContextMenuStrip menu, string text, char glyph, string? keys, Action onClick, bool bold = false)
@@ -204,26 +265,29 @@ public sealed class MainForm : Form
             return mi;
         }
 
-        var launch = Item(_itemMenu, "Launch", '\uE768', "Enter", LaunchSelected, bold: true);
+        Item(_itemMenu, L.MenuLaunch, '\uE768', "Enter", LaunchSelected, bold: true);
         _itemMenu.Items.Add(new ToolStripSeparator());
-        Item(_itemMenu, "Edit…", '\uE70F', "F2", EditSelected);
-        Item(_itemMenu, "Duplicate", '\uE8C8', "Ctrl+D", DuplicateSelected);
-        Item(_itemMenu, "Delete", '\uE74D', "Del", DeleteSelected);
+        Item(_itemMenu, L.MenuEdit, '\uE70F', "F2", EditSelected);
+        Item(_itemMenu, L.MenuDuplicate, '\uE8C8', "Ctrl+D", DuplicateSelected);
+        Item(_itemMenu, L.MenuDelete, '\uE74D', "Del", DeleteSelected);
         _itemMenu.Items.Add(new ToolStripSeparator());
-        Item(_itemMenu, "Open run log", '\uE9F9', "Ctrl+L", OpenLastLog);
-        _miProxyLogItem = Item(_itemMenu, "Open proxy log", '\uE774', null, OpenProxyLog);
-        Item(_itemMenu, "Open data folder", '\uE838', null, OpenDataFolder);
+        Item(_itemMenu, L.MenuOpenRunLog, '\uE9F9', "Ctrl+L", OpenLastLog);
+        _miProxyLogItem = Item(_itemMenu, L.MenuOpenProxyLog, '\uE774', null, OpenProxyLog);
+        Item(_itemMenu, L.MenuOpenDataFolder, '\uE838', null, OpenDataFolder);
         _itemMenu.Items.Add(new ToolStripSeparator());
-        Item(_itemMenu, "Create desktop shortcut", '\uE8A7', null, CreateDesktopShortcut);
-        _ = launch;
+        // The shortcut glyph points out of the window, so it turns with the reading direction.
+        Item(_itemMenu, L.MenuCreateShortcut, '\uE8A7', null, CreateDesktopShortcut);
 
-        Item(_spaceMenu, "Add app…", '\uE710', "Ctrl+N", () => AddProfile());
+        Item(_spaceMenu, L.MenuAddApp, '\uE710', "Ctrl+N", () => AddProfile());
         _spaceMenu.Items.Add(new ToolStripSeparator());
-        _miTiles = Item(_spaceMenu, "Tiles view", '\uECA5', "Ctrl+1", () => SetViewMode(tiles: true));
-        _miList = Item(_spaceMenu, "List view", '\uE8FD', "Ctrl+2", () => SetViewMode(tiles: false));
+        _miTiles = Item(_spaceMenu, L.MenuTilesView, '\uECA5', "Ctrl+1", () => SetViewMode(tiles: true));
+        _miList = Item(_spaceMenu, L.MenuListView, '\uE8FD', "Ctrl+2", () => SetViewMode(tiles: false));
         _spaceMenu.Items.Add(new ToolStripSeparator());
-        Item(_spaceMenu, "Runtime path…", '\uE713', null, () => EditRuntimePath());
+        Item(_spaceMenu, L.RuntimePath, '\uE713', null, () => EditRuntimePath());
     }
+
+    /// <summary>Glyphs that show a direction (a list's bullets, an arrow out of the window): mirrored in RTL.</summary>
+    private static bool IsDirectional(char glyph) => glyph is '\uE8FD' or '\uE8A7';
 
     private void BuildTiles()
     {
@@ -265,7 +329,6 @@ public sealed class MainForm : Form
         _listEmpty.TextAlign = ContentAlignment.MiddleCenter;
         _listEmpty.ForeColor = _t.SubText;
         _listEmpty.BackColor = _t.Content;
-        _listEmpty.Text = TileView.EmptyTitle + "\n\n" + TileView.EmptyHint;
         _listEmpty.Visible = false;
         _listEmpty.AllowDrop = true;
         _listEmpty.DragEnter += OnDragEnter;
@@ -285,14 +348,8 @@ public sealed class MainForm : Form
         _list.ForeColor = _t.Text;
         _list.AllowDrop = true;
         _list.SmallImageList = _listIcons;
-        _list.Columns.Add("Profile", 220);
-        _list.Columns.Add("APK", 170);
-        _list.Columns.Add("Data root", 260);
-        _list.Columns.Add("Size (dp)", 80);
-        _list.Columns.Add("API", 50);
-        _list.Columns.Add("Multi", 55);
-        _list.Columns.Add("Proxy", 150);
-        _list.Columns.Add("Status", 80);
+        foreach (var w in new[] { 220, 170, 260, 80, 50, 55, 150, 80 }) _list.Columns.Add("", w);
+        ApplyListTexts();
         _list.DoubleClick += (_, _) => LaunchSelected();
         _list.SelectedIndexChanged += (_, _) =>
         {
@@ -324,6 +381,15 @@ public sealed class MainForm : Form
         _list.DragDrop += OnDragDrop;
     }
 
+    /// <summary>The list's column headers and empty text in the current language; its columns run from the right in RTL.</summary>
+    private void ApplyListTexts()
+    {
+        var names = new[] { L.ColProfile, L.ColApk, L.ColDataRoot, L.ColSize, L.ColApi, L.ColMulti, L.ColProxy, L.ColStatus };
+        for (int i = 0; i < names.Length && i < _list.Columns.Count; i++) _list.Columns[i].Text = names[i];
+        _list.RightToLeftLayout = L.Rtl;
+        _listEmpty.Text = L.EmptyTitle + "\n\n" + L.EmptyHint;
+    }
+
     private void BuildStatusBar()
     {
         _statusStrip.Renderer = new ThemedRenderer(_t);
@@ -348,6 +414,7 @@ public sealed class MainForm : Form
         _toolbar.Font = Font;
         _statusStrip.Font = Font;
         _launchBtn.Font = new Font(_t.SemiboldFamily, Font.SizeInPoints);
+        _langMenu.DropDown.Font = Font;
         foreach (var m in new[] { _itemMenu, _spaceMenu })
         {
             m.Font = Font;
@@ -365,7 +432,7 @@ public sealed class MainForm : Form
         }
         _toolbar.ResumeLayout(true);
 
-        foreach (var m in new[] { _itemMenu, _spaceMenu })
+        foreach (var m in new ToolStripDropDown[] { _itemMenu, _spaceMenu, _langMenu.DropDown })
         {
             m.ImageScalingSize = new Size(S(16), S(16));
             m.Padding = new Padding(0, S(4), 0, S(4));
@@ -376,7 +443,9 @@ public sealed class MainForm : Form
         foreach (var (item, glyph, onAccent) in _glyphItems)
         {
             var old = item.Image;
-            item.Image = _t.Glyph(glyph, S(16), onAccent ? _t.AccentText : _t.Text);
+            var img = _t.Glyph(glyph, S(16), onAccent ? _t.AccentText : _t.Text);
+            if (L.Rtl && IsDirectional(glyph)) img.RotateFlip(RotateFlipType.RotateNoneFlipX);
+            item.Image = img;
             old?.Dispose();
         }
 
@@ -407,12 +476,15 @@ public sealed class MainForm : Form
         try
         {
             // The app icon (assets\WinApkLauncher.ico, embedded), all sizes; a drawn fallback otherwise.
-            using var s = typeof(MainForm).Assembly.GetManifestResourceStream("WinApkLauncher.ico");
-            if (s != null) _windowIcon = new Icon(s);
-            else
+            if (_windowIcon == null)
             {
-                using var bmp = WindowIconBitmap(LogicalToDeviceUnits(32));
-                _windowIcon = Icon.FromHandle(bmp.GetHicon());
+                using var s = typeof(MainForm).Assembly.GetManifestResourceStream("WinApkLauncher.ico");
+                if (s != null) _windowIcon = new Icon(s);
+                else
+                {
+                    using var bmp = WindowIconBitmap(LogicalToDeviceUnits(32));
+                    _windowIcon = Icon.FromHandle(bmp.GetHicon());
+                }
             }
             Icon = _windowIcon;
         }
@@ -431,6 +503,46 @@ public sealed class MainForm : Form
         using var glyph = _t.Glyph('\uECA5', (int)(px * 0.6f), _t.AccentText);
         g.DrawImage(glyph, (px - glyph.Width) / 2, (px - glyph.Height) / 2);
         return bmp;
+    }
+
+    // =====================================================================
+    // Language
+    // =====================================================================
+
+    /// <summary>The Language menu: save the setting, then rebuild the window in that language.</summary>
+    private void SetLanguage(string setting)
+    {
+        _store.Language = L.NormalizeSetting(setting);
+        if (_shotDir == null) SaveStore();
+        L.Apply(_store.Language);
+        RebuildUi();
+    }
+
+    /// <summary>
+    /// Every string and the reading direction again, in place: the toolbar and the menus are built
+    /// anew, the window is mirrored (or not) and the open startup windows are opened again. Running
+    /// and starting apps are kept.
+    /// </summary>
+    private void RebuildUi()
+    {
+        if (_notice is { IsDisposed: false }) _notice.Close();
+        SuspendLayout();
+        Text = L.MainTitle;
+        L.ApplyDirection(this);
+        _glyphItems.Clear();
+        BuildToolbarItems();
+        BuildMenuItems();
+        ApplyListTexts();
+        _tiles.AccessibleName = L.AppsHeader;
+        ResumeLayout(true);
+        ApplyMetrics();
+        RefreshAll();
+        ApplyViewMode(focus: true);
+        foreach (var w in _splashes.Keys.ToList())
+        {
+            CloseSplash(w);
+            ShowSplash(w);
+        }
     }
 
     // =====================================================================
@@ -453,15 +565,15 @@ public sealed class MainForm : Form
             _list.Items.Clear();
             foreach (var p in _store.Profiles)
             {
-                var it = new ListViewItem(p.Name) { Tag = p, ImageKey = p.Id, UseItemStyleForSubItems = false };
-                it.SubItems.Add(Path.GetFileName(p.ApkPath), _t.SubText, _t.Content, Font);
-                it.SubItems.Add(p.DataRoot, _t.SubText, _t.Content, Font);
-                it.SubItems.Add($"{p.PhoneWidthDp}x{p.PhoneHeightDp}");
-                it.SubItems.Add(p.SdkInt > 0 ? p.SdkInt.ToString() : "29*");
-                it.SubItems.Add(p.AllowMultipleInstances ? "yes" : "");
-                it.SubItems.Add(p.ProxyLabel, p.HasProxy ? _t.Text : _t.SubText, _t.Content, Font);
+                var it = new ListViewItem(L.Iso(p.Name)) { Tag = p, ImageKey = p.Id, UseItemStyleForSubItems = false };
+                it.SubItems.Add(L.Ltr(Path.GetFileName(p.ApkPath)), _t.SubText, _t.Content, Font);
+                it.SubItems.Add(L.Ltr(p.DataRoot), _t.SubText, _t.Content, Font);
+                it.SubItems.Add(L.Ltr($"{p.PhoneWidthDp}x{p.PhoneHeightDp}"));
+                it.SubItems.Add(L.Ltr(p.SdkInt > 0 ? p.SdkInt.ToString() : "29*"));
+                it.SubItems.Add(p.AllowMultipleInstances ? L.ListYes : "");
+                it.SubItems.Add(L.Ltr(p.ProxyLabel), p.HasProxy ? _t.Text : _t.SubText, _t.Content, Font);
                 bool running = IsRunning(p), starting = IsStarting(p);
-                it.SubItems.Add(starting ? "starting…" : running ? "running" : "", running ? _t.Accent : _t.Text, _t.Content, Font);
+                it.SubItems.Add(starting ? L.ListStarting : running ? L.ListRunning : "", running ? _t.Accent : _t.Text, _t.Content, Font);
                 if (p.Id == _selectedId) it.Selected = true;
                 _list.Items.Add(it);
             }
@@ -528,24 +640,24 @@ public sealed class MainForm : Form
 
         int starting = _store.Profiles.Count(IsStarting);
         int running = _store.Profiles.Count(x => IsRunning(x) && !IsStarting(x));
-        _summary.Text = $"{_store.Profiles.Count} {(_store.Profiles.Count == 1 ? "app" : "apps")}" +
-                        (starting > 0 ? $"  •  {starting} starting" : "") +
-                        (running > 0 ? $"  •  {running} running" : "");
+        _summary.Text = L.AppCount(_store.Profiles.Count) +
+                        (starting > 0 ? "  •  " + L.SummaryStarting(starting) : "") +
+                        (running > 0 ? "  •  " + L.SummaryRunning(running) : "");
         _runtimeBtn.ToolTipText = RuntimeTooltip();
         if (_store.ResolveRuntime() == null)
         {
-            _status.Text = "winapk-runtime.exe not found  •  use Runtime path… to locate it";
+            _status.Text = L.StatusNoRuntime;
             return;
         }
         // While an app starts, the status bar shows its step: the selected app's, else the latest.
         var watch = (p != null ? _starting.LastOrDefault(w => w.Profile.Id == p.Id) : null) ?? _starting.LastOrDefault();
         if (watch != null) { _status.Text = watch.StatusLine; return; }
-        if (p == null) { _status.Text = $"{_store.Profiles.Count} profiles  •  settings: {LauncherStore.StorePath}"; return; }
+        if (p == null) { _status.Text = L.StatusProfiles(_store.Profiles.Count, LauncherStore.StorePath); return; }
         var lp = _running.LastOrDefault(r => r.Profile.Id == p.Id);
         var runtimeLogs = RuntimeLauncher.RuntimeLogDir(p);
-        _status.Text = lp != null ? $"last log: {lp.LogPath}"
-                     : Directory.Exists(runtimeLogs) ? $"runtime data/logs: {runtimeLogs}"
-                     : $"run logs: {RuntimeLauncher.LogsDir}";
+        _status.Text = lp != null ? L.StatusLastLog(lp.LogPath)
+                     : Directory.Exists(runtimeLogs) ? L.StatusRuntimeLogs(runtimeLogs)
+                     : L.StatusRunLogs(RuntimeLauncher.LogsDir);
     }
 
     private bool IsRunning(Profile p) =>
@@ -558,17 +670,18 @@ public sealed class MainForm : Form
 
     private string TileTooltip(Profile p)
     {
+        var apk = string.IsNullOrWhiteSpace(p.ApkPath) ? L.TipNoApk : L.Ltr(Path.GetFileName(p.ApkPath));
+        var api = p.SdkInt > 0 ? p.SdkInt.ToString() : L.TipApiDefault;
         var lines = new List<string>
         {
-            p.Name,
-            $"{(string.IsNullOrWhiteSpace(p.ApkPath) ? "(no APK)" : Path.GetFileName(p.ApkPath))}  •  " +
-            $"{p.PhoneWidthDp}x{p.PhoneHeightDp} dp  •  API {(p.SdkInt > 0 ? p.SdkInt.ToString() : "29 (default)")}",
-            p.DataRoot,
+            L.Iso(p.Name),
+            $"{apk}  •  {L.Ltr($"{p.PhoneWidthDp}x{p.PhoneHeightDp} dp")}  •  API {api}",
+            L.Ltr(p.DataRoot),
         };
-        if (p.HasProxy) lines.Add($"Proxy: {p.ProxyLabel}");
+        if (p.HasProxy) lines.Add(L.TipProxy(p.ProxyLabel));
         var watch = _starting.LastOrDefault(w => w.Profile.Id == p.Id);
         if (watch != null) lines.Add($"{watch.PhaseText}  ({watch.ElapsedText})");
-        else if (IsRunning(p)) lines.Add("Running");
+        else if (IsRunning(p)) lines.Add(L.TipRunning);
         return string.Join("\n", lines);
     }
 
@@ -624,8 +737,7 @@ public sealed class MainForm : Form
         try { _store.Save(); }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not save {LauncherStore.StorePath}:\n{ex.Message}", "Save failed",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Msg.Show(this, L.CouldNotSave(LauncherStore.StorePath, ex.Message), L.SaveFailed, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -647,7 +759,7 @@ public sealed class MainForm : Form
     }
 
     // =====================================================================
-    // Actions (unchanged behaviour)
+    // Actions
     // =====================================================================
 
     private void LaunchSelected()
@@ -660,16 +772,15 @@ public sealed class MainForm : Form
         var runtime = _store.ResolveRuntime();
         if (runtime == null)
         {
-            var ask = MessageBox.Show(this,
-                "winapk-runtime.exe was not found.\n\n" +
-                $"{AppInfo.ProductName} looks for the runtime in its settings and next to the launcher:\n" +
-                $"{AppPaths.BundledRuntimeExe}\n\nLocate winapk-runtime.exe now?",
-                "Runtime not found", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
-            if (ask != DialogResult.OK || !EditRuntimePath()) return;
+            using var ask = new LauncherDialog(L.RuntimeNotFoundTitle, L.RuntimeNotFoundHeading,
+                L.RuntimeNotFoundBody(AppPaths.BundledRuntimeExe),
+                new[] { new DialogButton("locate", L.Locate, Accent: true), new DialogButton("cancel", L.Cancel) },
+                LauncherDialog.Kind.Warning);
+            if (ShowLauncherDialog(ask) != "locate" || !EditRuntimePath()) return;
             runtime = _store.ResolveRuntime();
         }
         var err = RuntimeLauncher.Validate(runtime, p);
-        if (err != null) { MessageBox.Show(this, err, "Cannot launch", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+        if (err != null) { Msg.Show(this, err, L.CannotLaunch, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
         // Never a second copy: a second runtime on the same app folder only exits with code 3.
         if (HandleAlreadyRunning(p, runtime!)) return;
@@ -678,7 +789,7 @@ public sealed class MainForm : Form
         try { lp = RuntimeLauncher.Start(runtime, p); }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Msg.Show(this, ex.Message, L.LaunchFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
         _running.Add(lp);
@@ -688,7 +799,7 @@ public sealed class MainForm : Form
 
         lp.WhenExited(() => OnProcessExited(lp));
         RefreshAll();
-        _status.Text = $"launched ‘{p.Name}’ • log: {lp.LogPath}";
+        _status.Text = L.StatusLaunched(p.Name, lp.LogPath);
         ShowSplash(watch);
     }
 
@@ -706,7 +817,7 @@ public sealed class MainForm : Form
         if (watch != null)
         {
             ShowSplash(watch);
-            _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+            _status.Text = L.StatusStillStarting(p.Name);
             return true;
         }
 
@@ -724,11 +835,11 @@ public sealed class MainForm : Form
         {
             if (p.AllowMultipleInstances) return false;
             RuntimeInstance.BringToFront(window);
-            _status.Text = $"‘{p.Name}’ is already running  •  brought its window to the front";
+            _status.Text = L.StatusBroughtToFront(p.Name);
             return true;
         }
         // Started elsewhere and still starting: its startup window, or a new one that follows it.
-        _status.Text = $"‘{p.Name}’ is still starting  •  not started again";
+        _status.Text = L.StatusStillStarting(p.Name);
         if (SplashForm.TryBringToFront(SplashForm.KeyFor(p, runtime), waitMs: 1500)) return true;
         var target = probe.Processes.FirstOrDefault();
         if (target != null && SplashProcess.SpawnAttached(p, target.Pid)) return true;
@@ -747,6 +858,16 @@ public sealed class MainForm : Form
         }
         var splash = new SplashForm(watch.Profile, watch, SplashForm.KeyFor(watch.Profile, _store.ResolveRuntime()),
             anchor: WindowState == FormWindowState.Minimized ? null : Bounds, inTaskbar: false);
+        // Its Stop link ends the runtime the way Stop it does; the exit then closes the window.
+        splash.StopProcess = () =>
+        {
+            var lp = watch.Launch;
+            if (lp == null || SafeExited(lp.Process)) return true;
+            int pid;
+            try { pid = lp.Process.Id; } catch { return true; }
+            _stoppedPids.Add(pid);
+            return RuntimeInstance.Stop(pid);
+        };
         splash.FormClosed += (_, _) =>
         {
             if (_splashes.TryGetValue(watch, out var s) && s == splash) _splashes.Remove(watch);
@@ -766,16 +887,16 @@ public sealed class MainForm : Form
     /// </summary>
     private void ShowStillStarting(Profile p)
     {
-        var heading = $"{p.Name} is still starting.";
-        const string body = "The first launch prepares the app and can take several minutes for large apps.";
+        var heading = L.StillStartingHeading(p.Name);
+        var body = L.StillStartingBody;
         if (_notice is { IsDisposed: false })
         {
             _notice.UpdateText(heading, body);
             _notice.Activate();
             return;
         }
-        _notice = new LauncherDialog("Still starting", heading, body,
-            new[] { new DialogButton("ok", "OK", Accent: true) });
+        _notice = new LauncherDialog(L.StillStartingTitle, heading, body,
+            new[] { new DialogButton("ok", L.Ok, Accent: true) });
         _notice.FormClosed += (_, _) => _notice = null;
         _notice.Show(this);
     }
@@ -805,7 +926,7 @@ public sealed class MainForm : Form
         }
         if (changed) RefreshAll();
         else UpdateUiState();
-        if (opened != null) _status.Text = $"‘{opened.Profile.Name}’ is running  •  log: {opened.Launch!.LogPath}";
+        if (opened != null) _status.Text = L.StatusRunning(opened.Profile.Name, opened.Launch!.LogPath);
         if (_starting.Count == 0) _startTimer.Stop();
     }
 
@@ -825,7 +946,7 @@ public sealed class MainForm : Form
         if (showError) splash!.ShowExited(code, lp.LogPath);
         else if (splash is { IsDisposed: false }) splash.Close();
 
-        if (stopped) _status.Text = $"stopped ‘{lp.Profile.Name}’";
+        if (stopped) _status.Text = L.StatusStopped(lp.Profile.Name);
         else if (code == RuntimeInstance.ExitAlreadyRunning) ShowAlreadyRunning(lp);
         // Any other non-zero exit is treated as a crashed launch; before its first window, the
         // startup window says so (it has the log and the logs folder), else the crash message.
@@ -838,19 +959,7 @@ public sealed class MainForm : Form
         var p = lp.Profile;
         var others = RunningCopies(p, except: lp);
         var window = others.Select(x => x.Window).FirstOrDefault(h => h != IntPtr.Zero);
-        using var dlg = new LauncherDialog("Already running",
-            $"{p.Name} is already running, or still starting in the background.",
-            "This launch did not start a second copy, so the app's data is safe. The first launch of a " +
-            "large app can take several minutes before its window opens.\n\n" +
-            $"Log: {lp.LogPath}",
-            new[]
-            {
-                new DialogButton("wait", "Wait", Accent: true, Tip: "Close this message. The running copy carries on."),
-                new DialogButton("show", "Show it", Enabled: window != IntPtr.Zero,
-                    Tip: window != IntPtr.Zero ? "Bring its window to the front" : "It has no window yet"),
-                new DialogButton("stop", "Stop it", Enabled: others.Count > 0,
-                    Tip: others.Count > 0 ? "End the running copy" : "No runtime process for this app was found"),
-            });
+        using var dlg = AlreadyRunningDialog(p, lp.LogPath, hasWindow: window != IntPtr.Zero, hasProcess: others.Count > 0);
         switch (ShowLauncherDialog(dlg))
         {
             case "show":
@@ -861,6 +970,15 @@ public sealed class MainForm : Form
                 break;
         }
     }
+
+    private static LauncherDialog AlreadyRunningDialog(Profile p, string logPath, bool hasWindow, bool hasProcess) =>
+        new(L.AlreadyRunningTitle, L.AlreadyRunningHeading(p.Name), L.AlreadyRunningBody(logPath),
+            new[]
+            {
+                new DialogButton("wait", L.Wait, Accent: true, Tip: L.WaitTip),
+                new DialogButton("show", L.ShowIt, Enabled: hasWindow, Tip: hasWindow ? L.ShowItTip : L.ShowItNoWindow),
+                new DialogButton("stop", L.StopIt, Enabled: hasProcess, Tip: hasProcess ? L.StopItTip : L.StopItNone),
+            });
 
     /// <summary>The runtime processes serving this profile's app: this window's launches and any other.</summary>
     private List<RuntimeProcess> RunningCopies(Profile p, LaunchedProcess? except)
@@ -888,19 +1006,10 @@ public sealed class MainForm : Form
         var copies = RunningCopies(p, except);
         if (copies.Count == 0)
         {
-            MessageBox.Show(this, $"No running copy of {p.Name} was found. It may have exited already.", "Stop app",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Msg.Show(this, L.NoRunningCopy(p.Name), L.StopTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        using (var confirm = new LauncherDialog("Stop app", $"Stop {p.Name}?",
-                   $"This ends {p.Name} at once" + (copies.Count > 1 ? $" ({copies.Count} processes)" : "") + ", " +
-                   "even if it is still preparing its first launch. Anything the app has not saved yet may be lost, " +
-                   "such as a message you are typing or data it has not written yet.",
-                   new[]
-                   {
-                       new DialogButton("stop", "Stop it"),
-                       new DialogButton("cancel", "Cancel", Accent: true),
-                   }, LauncherDialog.Kind.Warning))
+        using (var confirm = LauncherDialog.StopConfirm(p.Name, copies.Count))
         {
             if (ShowLauncherDialog(confirm) != "stop") return;
         }
@@ -911,31 +1020,33 @@ public sealed class MainForm : Form
             if (!RuntimeInstance.Stop(c.Pid)) failed++;
         }
         RefreshAll();
-        _status.Text = failed == 0 ? $"stopped ‘{p.Name}’" : $"could not stop {failed} process(es) of ‘{p.Name}’";
+        _status.Text = failed == 0 ? L.StatusStopped(p.Name) : L.StatusStopFailed(failed, p.Name);
         if (failed > 0)
-            MessageBox.Show(this, $"{failed} process(es) of {p.Name} could not be stopped.", "Stop app",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Msg.Show(this, L.CouldNotStop(failed, p.Name), L.StopTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     /// <summary>A non-zero exit other than 3: the log's last lines, the log and its folder.</summary>
     private void ShowCrashed(LaunchedProcess lp, int code)
     {
-        var p = lp.Profile;
-        var runtimeLogs = RuntimeLauncher.RuntimeLogDir(p);
-        var body = $"Log: {lp.LogPath}" +
-                   (Directory.Exists(runtimeLogs) ? $"\nRuntime data/logs: {runtimeLogs}" : "");
-        using var dlg = new LauncherDialog("Launch crashed", $"‘{p.Name}’ exited with code {code} (crashed launch).", body,
-            new[]
-            {
-                new DialogButton("log", "Open log", Accent: true),
-                new DialogButton("folder", "Open logs folder", Tip: "Open the logs folder in Explorer, with this log selected"),
-                new DialogButton("close", "Close"),
-            }, LauncherDialog.Kind.Error, details: RuntimeLauncher.TailLog(lp.LogPath));
+        using var dlg = CrashDialog(lp.Profile, code, lp.LogPath, RuntimeLauncher.TailLog(lp.LogPath));
         switch (ShowLauncherDialog(dlg))
         {
             case "log": OpenInNotepad(lp.LogPath); break;
             case "folder": OpenLogsFolder(lp.LogPath); break;
         }
+    }
+
+    private static LauncherDialog CrashDialog(Profile p, int code, string logPath, string details)
+    {
+        var runtimeLogs = RuntimeLauncher.RuntimeLogDir(p);
+        var body = L.LogLine(logPath) + (Directory.Exists(runtimeLogs) ? "\n" + L.RuntimeLogsLine(runtimeLogs) : "");
+        return new LauncherDialog(L.CrashTitle, L.CrashHeading(p.Name, code), body,
+            new[]
+            {
+                new DialogButton("log", L.OpenLog, Accent: true),
+                new DialogButton("folder", L.OpenLogsFolder, Tip: L.OpenLogsFolderTipSelected),
+                new DialogButton("close", L.Close),
+            }, LauncherDialog.Kind.Error, details: details);
     }
 
     private string? ShowLauncherDialog(LauncherDialog dlg)
@@ -947,7 +1058,7 @@ public sealed class MainForm : Form
 
     private void AddProfile(string? apkPath = null)
     {
-        var name = "New profile";
+        var name = L.NewProfileName;
         if (!string.IsNullOrWhiteSpace(apkPath))
             name = Path.GetFileNameWithoutExtension(apkPath).Replace('_', ' ').Replace('-', ' ').Trim();
         var p = new Profile
@@ -989,7 +1100,7 @@ public sealed class MainForm : Form
         if (p == null) return;
         var copy = Clone(p);
         copy.Id = Guid.NewGuid().ToString("N");
-        copy.Name = p.Name + " (copy)";
+        copy.Name = p.Name + L.CopySuffix;
         copy.DataRoot = _store.SuggestDataRoot(copy.Name);
         using var dlg = new ProfileForm(copy, isNew: true, n => _store.SuggestDataRoot(n));
         if (ShowProfileDialog(dlg) == DialogResult.OK)
@@ -1012,8 +1123,12 @@ public sealed class MainForm : Form
     {
         var p = Selected;
         if (p == null) return;
-        if (MessageBox.Show(this, $"Delete profile ‘{p.Name}’?\n(The data root on disk is NOT deleted.)",
-                "Delete profile", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        using (var confirm = new LauncherDialog(L.DeleteTitle, L.DeleteHeading(p.Name), L.DeleteBody,
+                   new[] { new DialogButton("delete", L.Delete, Accent: true), new DialogButton("cancel", L.Cancel) },
+                   LauncherDialog.Kind.Warning))
+        {
+            if (ShowLauncherDialog(confirm) != "delete") return;
+        }
         int idx = _store.Profiles.FindIndex(x => x.Id == p.Id);
         _store.Profiles.RemoveAll(x => x.Id == p.Id);
         // Keep the selection on the neighbour, like Explorer does.
@@ -1031,8 +1146,7 @@ public sealed class MainForm : Form
         var path = lp?.LogPath ?? (p != null ? RuntimeLauncher.LatestLog(p) : null);
         if (path == null)
         {
-            MessageBox.Show(this, $"No run log yet for this profile.\n\nRun logs are kept in:\n{RuntimeLauncher.LogsDir}",
-                "Log", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Msg.Show(this, L.NoRunLog(RuntimeLauncher.LogsDir), L.LogCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         OpenInNotepad(path);
@@ -1042,7 +1156,7 @@ public sealed class MainForm : Form
     private void OpenLogsFolder(string? select = null)
     {
         try { ShellOpen.LogsFolder(select); }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Open logs folder", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        catch (Exception ex) { Msg.Show(this, ex.Message, L.OpenLogsFolder, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
     private void OpenDataFolder()
@@ -1054,7 +1168,7 @@ public sealed class MainForm : Form
             Directory.CreateDirectory(p.DataRoot);
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{p.DataRoot}\"") { UseShellExecute = true });
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Open folder", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        catch (Exception ex) { Msg.Show(this, ex.Message, L.OpenFolderCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
     private void OpenProxyLog()
@@ -1063,14 +1177,13 @@ public sealed class MainForm : Form
         if (p == null) return;
         if (!p.HasProxy)
         {
-            MessageBox.Show(this, "This profile has no network proxy configured.", "Proxy log", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Msg.Show(this, L.NoProxyConfigured, L.ProxyLogCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         var path = Path.Combine(RuntimeLauncher.RuntimeLogDir(p), "proxy.log");
         if (!File.Exists(path))
         {
-            MessageBox.Show(this, $"No proxy log yet.\nIt is written the first time ‘{p.Name}’ is launched with a proxy.\n\n{path}",
-                "Proxy log", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Msg.Show(this, L.NoProxyLog(p.Name, path), L.ProxyLogCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         OpenInNotepad(path);
@@ -1089,24 +1202,22 @@ public sealed class MainForm : Form
 
             // WScript.Shell via COM: a .lnk with no extra dependencies.
             var shellType = Type.GetTypeFromProgID("WScript.Shell")
-                ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
+                ?? throw new InvalidOperationException(L.ShortcutNoShell);
             dynamic shell = Activator.CreateInstance(shellType)!;
             dynamic link = shell.CreateShortcut(linkPath);
             link.TargetPath = exe;
             link.Arguments = $"--launch {p.Id}";
             link.WorkingDirectory = AppContext.BaseDirectory;
-            link.Description = $"Launch {p.Name} ({AppInfo.ProductName})";
+            link.Description = L.ShortcutDescription(p.Name);
             if (iconPath != null) link.IconLocation = iconPath + ",0";
             link.Save();
 
-            _status.Text = $"desktop shortcut created: {linkPath}";
-            MessageBox.Show(this, $"Shortcut created on the desktop:\n{linkPath}", "Desktop shortcut",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _status.Text = L.StatusShortcut(linkPath);
+            Msg.Show(this, L.ShortcutCreated(linkPath), L.ShortcutCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "Could not create the shortcut:\n" + ex.Message, "Desktop shortcut",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Msg.Show(this, L.ShortcutFailed(ex.Message), L.ShortcutCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1143,8 +1254,8 @@ public sealed class MainForm : Form
         var current = _store.ResolveRuntime();
         using var dlg = new OpenFileDialog
         {
-            Title = "Locate winapk-runtime.exe",
-            Filter = "winapk-runtime.exe|winapk-runtime.exe|Executables|*.exe|All files|*.*",
+            Title = L.LocateRuntimeTitle,
+            Filter = L.RuntimeFilter,
             FileName = current ?? "winapk-runtime.exe",
         };
         if (current != null) dlg.InitialDirectory = Path.GetDirectoryName(current);
@@ -1160,44 +1271,23 @@ public sealed class MainForm : Form
     private string RuntimeTooltip()
     {
         var exe = _store.ResolveRuntime(out var src);
-        return "Locate winapk-runtime.exe\n" + src switch
-        {
-            RuntimeSource.Settings => exe + "  (chosen in settings)",
-            RuntimeSource.Bundled => exe + "  (bundled)",
-            _ => "Not found",
-        };
+        return L.RuntimeTip(exe, src);
     }
 
     private void ShowAbout()
     {
-        var lines = new List<string>
-        {
-            $"{AppInfo.ProductName} {AppInfo.Version}",
-            "A launcher and per-app settings manager for Win.apk, which runs Android apps on Windows.",
-            "",
-            $"Runtime:  {_store.DescribeRuntime()}",
-        };
+        var source = new List<string>();
         try
         {
             if (File.Exists(AppPaths.BundledRuntimeSourceFile))
-                lines.AddRange(File.ReadLines(AppPaths.BundledRuntimeSourceFile)
+                source.AddRange(File.ReadLines(AppPaths.BundledRuntimeSourceFile)
                     .Where(l => l.StartsWith("Source", StringComparison.OrdinalIgnoreCase) ||
                                 l.StartsWith("Commit", StringComparison.OrdinalIgnoreCase))
-                    .Take(3).Select(l => "  " + l.Trim()));
+                    .Take(3).Select(l => l.Trim()));
         }
         catch { }
-        lines.AddRange(new[]
-        {
-            $"Settings: {LauncherStore.StorePath}",
-            $"Data:     {AppPaths.LocalDir}",
-            $"Mode:     {AppPaths.ModeLabel}",
-            "",
-            "License: GNU AGPL-3.0. Source: " + AppInfo.ProjectUrl,
-            "Win.apk by israel2176, based on Mac.apk by kksimp.",
-            "Not affiliated with Google, WhatsApp or Meta.",
-        });
-        MessageBox.Show(this, string.Join("\n", lines), $"About {AppInfo.ProductName}",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        var text = L.AboutText(_store.DescribeRuntime(), source, LauncherStore.StorePath, AppPaths.LocalDir, AppPaths.ModeLabel);
+        Msg.Show(this, text, L.About, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     // ----- packages handed over by Explorer ("Open with") or by a second start -----
@@ -1309,10 +1399,12 @@ public sealed class MainForm : Form
     // =====================================================================
 
     /// <summary>
-    /// Saves tiles, keyboard focus, narrow window, list and Edit-dialog captures, then closes.
-    /// It never opens a context menu, never presses Enter and never saves: a context menu opened
-    /// programmatically once led to a real launch. <see cref="RuntimeLauncher.LaunchBlocked"/> is
-    /// set for this process as a second guard.
+    /// Saves tiles, keyboard focus, narrow window, list, Edit dialog, the exit-code-3 and crash
+    /// messages and the startup window (starting, stalled, busy, failed), then the tiles and the list
+    /// again after a live switch to the other language; then closes. It never opens a context menu,
+    /// never presses Enter, never launches and never saves: a context menu opened programmatically
+    /// once led to a real launch. <see cref="RuntimeLauncher.LaunchBlocked"/> is set for this process
+    /// as a second guard. The dialogs are built here with sample values and closed without a choice.
     /// </summary>
     private async void RunScreenshots()
     {
@@ -1333,10 +1425,10 @@ public sealed class MainForm : Form
             WindowShot.Capture(this, Path.Combine(dir, $"tiles{_shotSuffix}.png"));
 
             _tiles.SimulateHover(-1);
-            _tiles.SimulateKey(Keys.Right); // keyboard focus ring on the next tile (arrow keys only)
+            _tiles.SimulateKey(_tiles.NextKey); // keyboard focus ring on the next tile (arrow keys only)
             await Task.Delay(300);
             WindowShot.Capture(this, Path.Combine(dir, $"tiles-keyboard{_shotSuffix}.png"));
-            _tiles.SimulateKey(Keys.Left);
+            _tiles.SimulateKey(_tiles.PreviousKey);
 
             var size = Size;
             Size = MinimumSize;
@@ -1351,15 +1443,35 @@ public sealed class MainForm : Form
 
             if (Selected != null)
             {
-                _dialogShownHook = async dlg =>
-                {
-                    await Task.Delay(700);
-                    try { WindowShot.Capture(dlg, Path.Combine(dir, $"edit{_shotSuffix}.png")); } catch { }
-                    dlg.DialogResult = DialogResult.Cancel;
-                };
+                CaptureNextDialog(Path.Combine(dir, $"edit{_shotSuffix}.png"));
                 EditSelected();
                 _dialogShownHook = null;
             }
+
+            var p = Selected ?? _store.Profiles.FirstOrDefault();
+            if (p != null)
+            {
+                var log = Path.Combine(RuntimeLauncher.LogsDir, RuntimeLauncher.MakeFileSafe(p.Name) + "-20261023-101500.log");
+                CaptureNextDialog(Path.Combine(dir, $"already-running{_shotSuffix}.png"));
+                using (var dlg = AlreadyRunningDialog(p, log, hasWindow: false, hasProcess: true)) ShowLauncherDialog(dlg);
+                CaptureNextDialog(Path.Combine(dir, $"crash{_shotSuffix}.png"));
+                using (var dlg = CrashDialog(p, 1, log, SampleLogTail)) ShowLauncherDialog(dlg);
+                _dialogShownHook = null;
+
+                await CaptureSplash(p, log, "splash", SplashShot.Converting);
+                await CaptureSplash(p, log, "splash-stalled", SplashShot.Stalled);
+                await CaptureSplash(p, log, "splash-busy", SplashShot.Busy);
+                await CaptureSplash(p, log, "splash-error", SplashShot.Exited);
+            }
+
+            // The Language menu's own path, without the menu: switch, then capture the rebuilt window.
+            SetLanguage(L.Current.Code == "he" ? "en" : "he");
+            SetViewMode(tiles: true);
+            await Task.Delay(600);
+            WindowShot.Capture(this, Path.Combine(dir, $"switched-tiles{_shotSuffix}.png"));
+            SetViewMode(tiles: false);
+            await Task.Delay(500);
+            WindowShot.Capture(this, Path.Combine(dir, $"switched-list{_shotSuffix}.png"));
         }
         catch (Exception ex)
         {
@@ -1367,11 +1479,60 @@ public sealed class MainForm : Form
         }
         Close();
     }
+
+    /// <summary>The next modal dialog is captured once it has painted, then closed without a choice.</summary>
+    private void CaptureNextDialog(string path)
+    {
+        _dialogShownHook = async dlg =>
+        {
+            await Task.Delay(700);
+            try { WindowShot.Capture(dlg, path); } catch { }
+            dlg.DialogResult = DialogResult.Cancel;
+        };
+    }
+
+    private enum SplashShot { Converting, Stalled, Busy, Exited }
+
+    /// <summary>A startup window with a sample state: no runtime behind it, key 0, closed after the capture.</summary>
+    private async Task CaptureSplash(Profile p, string log, string name, SplashShot state)
+    {
+        var watch = new StartupWatch(p, log);
+        watch.Feed("[win.apk] installing the app (once per install)...");
+        watch.Feed("[install] extracting lib/arm64-v8a (12 files)");
+        if (state != SplashShot.Exited) watch.Feed("[win.apk] converting the app's code (once per install)...");
+        watch.SetShotState(elapsed: TimeSpan.FromSeconds(state == SplashShot.Converting ? 43 : 251),
+            logIdle: state is SplashShot.Stalled or SplashShot.Busy ? TimeSpan.FromMinutes(4) : TimeSpan.Zero,
+            cpuBusy: state != SplashShot.Stalled);
+        using var splash = new SplashForm(p, watch, key: 0, anchor: Bounds, inTaskbar: false);
+        splash.Show();
+        if (state == SplashShot.Exited) splash.ShowExited(1, log);
+        else splash.RefreshPhase();
+        await Task.Delay(700);
+        WindowShot.Capture(splash, Path.Combine(_shotDir!, $"{name}{_shotSuffix}.png"));
+        splash.Close();
+    }
+
+    private const string SampleLogTail =
+        "# WinApk Launcher 0.1.1\n# command: \"W:\\runtime\\bin\\winapk-runtime.exe\" --apk \"W:\\pkgs\\app.apk\" --data \"W:\\apps\\app\"\n" +
+        "----------------------------------------------------------------\n" +
+        "[win.apk] installing the app (once per install)...\n" +
+        "[install] extracting lib/arm64-v8a (12 files)\n" +
+        "[win.apk] converting the app's code (once per install)...\n" +
+        "Exception in thread \"main\" java.lang.OutOfMemoryError: Java heap space\n" +
+        "\tat com.android.dx.Converter.run(Converter.java:118)\n" +
+        "# ---- exited, code 1 ----";
 }
 
-/// <summary>Captures one window (its own pixels only, via PrintWindow) to a PNG.</summary>
+/// <summary>
+/// Captures one window (its own pixels only, via PrintWindow) to a PNG. PrintWindow returns a
+/// mirrored (right-to-left layout) window that has a title bar flipped, so that image is flipped
+/// back to what the screen shows; a borderless one (the startup window) comes back as it is.
+/// </summary>
 internal static class WindowShot
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
 
@@ -1397,6 +1558,9 @@ internal static class WindowShot
             try { PrintWindow(h, hdc, 2 /* PW_RENDERFULLCONTENT */); }
             finally { g.ReleaseHdc(hdc); }
         }
+        bool mirrored = (GetWindowLongPtrW(h, -20 /* GWL_EXSTYLE */).ToInt64() & 0x00400000 /* WS_EX_LAYOUTRTL */) != 0;
+        bool caption = (GetWindowLongPtrW(h, -16 /* GWL_STYLE */).ToInt64() & 0x00C00000 /* WS_CAPTION */) == 0x00C00000;
+        if (mirrored && caption) full.RotateFlip(RotateFlipType.RotateNoneFlipX);
         // Drop the invisible resize borders: crop to the visible frame.
         var crop = new Rectangle(0, 0, w, ht);
         if (DwmGetWindowAttribute(h, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out var fr, 16) == 0)

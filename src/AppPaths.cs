@@ -62,5 +62,5 @@ internal static class AppPaths
     /// <summary>Where the bundled runtime came from (written by the release workflow), or null.</summary>
     public static string BundledRuntimeSourceFile => Path.Combine(ExeDir, "runtime", "SOURCE.txt");
 
-    public static string ModeLabel => Portable ? "portable mode" : "installed mode";
+    public static string ModeLabel => Portable ? L.ModePortable : L.ModeInstalled;
 }

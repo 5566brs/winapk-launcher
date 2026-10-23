@@ -1,6 +1,10 @@
 namespace WinApkLauncher;
 
-/// <summary>Edits a single <see cref="Profile"/>. Returns the edited copy in <see cref="Result"/>.</summary>
+/// <summary>
+/// Edits a single <see cref="Profile"/>. Returns the edited copy in <see cref="Result"/>. Mirrored in
+/// a right-to-left language (labels on the right, fields to their left); the fields for paths,
+/// hosts, ports, credentials and JVM options stay left to right.
+/// </summary>
 public sealed class ProfileForm : Form
 {
     public Profile Result { get; }
@@ -29,9 +33,9 @@ public sealed class ProfileForm : Form
     private readonly List<Control> _proxyFields = new();
     private CancellationTokenSource? _testCts;
 
-    private static readonly (string Label, ProxyKind Kind)[] ProxyTypes =
+    private static (string Label, ProxyKind Kind)[] ProxyTypes => new[]
     {
-        ("None (direct)", ProxyKind.None),
+        (L.ProxyNone, ProxyKind.None),
         ("SOCKS5", ProxyKind.Socks5),
         ("SOCKS4 / 4a", ProxyKind.Socks4),
         ("HTTP CONNECT", ProxyKind.Http),
@@ -44,18 +48,18 @@ public sealed class ProfileForm : Form
     private readonly System.Windows.Forms.Timer _headerTimer = new() { Interval = 350 };
 
     // (label, width, height) presets the task asked for.
-    private static readonly (string Label, int W, int H)[] Presets =
+    private static (string Label, int W, int H)[] Presets => new[]
     {
-        ("360 x 800  (default)", 360, 800),
-        ("412 x 915", 412, 915),
-        ("393 x 873", 393, 873),
-        ("Custom…", 0, 0),
+        (L.PresetDefault, 360, 800),
+        (L.Ltr("412 x 915"), 412, 915),
+        (L.Ltr("393 x 873"), 393, 873),
+        (L.PresetCustom, 0, 0),
     };
 
-    private static readonly (string Label, int Level)[] LogLevels =
+    private static (string Label, int Level)[] LogLevels => new[]
     {
-        ("Default (all)", 0), ("Verbose (2)", 2), ("Debug (3)", 3),
-        ("Info (4)", 4), ("Warn (5)", 5), ("Error (6)", 6),
+        (L.LogDefault, 0), (L.LogVerbose, 2), (L.LogDebug, 3),
+        (L.LogInfo, 4), (L.LogWarn, 5), (L.LogError, 6),
     };
 
     // New profiles: while the data root is still the suggested one, it follows the Name field.
@@ -71,7 +75,7 @@ public sealed class ProfileForm : Form
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = isNew ? "Add profile" : "Edit profile";
+        Text = isNew ? L.AddProfileTitle : L.EditProfileTitle;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
@@ -81,6 +85,7 @@ public sealed class ProfileForm : Form
         Font = _t.UiFont(9f);
         BackColor = _t.Content;
         ForeColor = _t.Text;
+        L.ApplyDirection(this); // RTL: the form mirrors the positions below
 
         const int labelX = 20, fieldX = 156, fieldW = 330, browseW = 84, wideW = fieldW + 8 + browseW;
         const int row = 36;
@@ -116,29 +121,31 @@ public sealed class ProfileForm : Form
         }
         ThemedButton Browse(int yy, Action onClick)
         {
-            var b = new ThemedButton { Text = "Browse…", Left = fieldX + fieldW + 8, Top = yy - 2, Width = browseW, Height = 28 };
+            var b = new ThemedButton { Text = L.Browse, Left = fieldX + fieldW + 8, Top = yy - 2, Width = browseW, Height = 28 };
             b.Click += (_, _) => onClick();
             Controls.Add(b);
             return b;
         }
 
         // Name
-        Lab("Name", y);
+        Lab(L.FieldName, y);
         _name.SetBounds(fieldX, y, wideW, 24);
         _name.Text = p.Name;
+        // The name box reads in the name's own direction (English left to right, Hebrew right to left).
+        if (!string.IsNullOrWhiteSpace(p.Name)) _name.RightToLeft = L.StartsRtl(p.Name) ? RightToLeft.Yes : RightToLeft.No;
         Controls.Add(_name);
         y += row;
 
         // APK
-        Lab("APK", y);
+        Lab(L.FieldApk, y);
         _apk.SetBounds(fieldX, y, fieldW, 24);
         _apk.Text = p.ApkPath;
         Controls.Add(_apk);
-        Browse(y, () => BrowseFile(_apk, "Android packages|*.apk;*.xapk;*.apkm;*.apks|All files|*.*"));
+        Browse(y, () => BrowseFile(_apk, L.ApkFilter));
         y += row;
 
         // Data root
-        Lab("Data root", y);
+        Lab(L.FieldDataRoot, y);
         _data.SetBounds(fieldX, y, fieldW, 24);
         _data.Text = p.DataRoot;
         Controls.Add(_data);
@@ -150,12 +157,11 @@ public sealed class ProfileForm : Form
         };
         Browse(y, () => BrowseFolder(_data));
         y += 30;
-        Hint("Each profile needs its OWN data root. Two profiles on the same APK\n" +
-             "with different roots = two independent instances/accounts.", fieldX, y, wideW, 34);
+        Hint(L.HintDataRoot, fieldX, y, wideW, 34);
         y += 44;
 
         // Phone size
-        Lab("Phone size (dp)", y);
+        Lab(L.FieldPhoneSize, y);
         _sizePreset.DropDownStyle = ComboBoxStyle.DropDownList;
         _sizePreset.SetBounds(fieldX, y, 180, 24);
         foreach (var pr in Presets) _sizePreset.Items.Add(pr.Label);
@@ -172,10 +178,10 @@ public sealed class ProfileForm : Form
         y += row;
 
         // API level
-        Lab("Android API", y);
+        Lab(L.FieldApi, y);
         _sdk.DropDownStyle = ComboBoxStyle.DropDownList;
         _sdk.SetBounds(fieldX, y, 180, 24);
-        _sdk.Items.Add("Default (29)");
+        _sdk.Items.Add(L.ApiDefault);
         for (int lvl = 21; lvl <= 37; lvl++) _sdk.Items.Add($"API {lvl}");
         _sdk.SelectedIndex = p.SdkInt is >= 21 and <= 37 ? p.SdkInt - 21 + 1 : 0;
         Controls.Add(_sdk);
@@ -183,24 +189,24 @@ public sealed class ProfileForm : Form
         y += row;
 
         // Density
-        Lab("Density (dpi)", y);
+        Lab(L.FieldDensity, y);
         _density.SetBounds(fieldX, y, 80, 24);
         _density.Minimum = 0; _density.Maximum = 640; _density.Value = Clamp(p.DensityDpi, 0, 640);
         Controls.Add(_density);
-        Hint("0 = auto  •  WINAPK_DENSITY (160/240/320…)", fieldX + 90, y + 4, 320);
+        Hint(L.HintDensity, fieldX + 90, y + 4, 320);
         y += row;
 
         // JVM opts
-        Lab("Extra JVM opts", y);
+        Lab(L.FieldJvm, y);
         _jvm.SetBounds(fieldX, y, wideW, 24);
         _jvm.Text = p.JvmOpts;
         Controls.Add(_jvm);
         y += 30;
-        Hint("space-separated • MACAPK_JVM_OPTS (e.g. -Xmx2g)", fieldX, y, wideW);
+        Hint(L.HintJvm, fieldX, y, wideW);
         y += 30;
 
         // Log level
-        Lab("Log level", y);
+        Lab(L.FieldLogLevel, y);
         _log.DropDownStyle = ComboBoxStyle.DropDownList;
         _log.SetBounds(fieldX, y, 180, 24);
         foreach (var ll in LogLevels) _log.Items.Add(ll.Label);
@@ -209,7 +215,7 @@ public sealed class ProfileForm : Form
         y += row;
 
         // Multi instance
-        _multi.Text = "Allow multiple instances (WINAPK_ALLOW_SECOND_INSTANCE)";
+        _multi.Text = L.FieldMulti;
         _multi.SetBounds(fieldX, y, wideW, 24);
         _multi.Checked = p.AllowMultipleInstances;
         Controls.Add(_multi);
@@ -220,13 +226,13 @@ public sealed class ProfileForm : Form
         y += 12;
         Controls.Add(new Label
         {
-            Text = "Network proxy", Left = labelX, Top = y, Width = 200, Height = 20,
+            Text = L.SectionProxy, Left = labelX, Top = y, Width = 200, Height = 20,
             Font = _t.UiFont(9.5f, semibold: true),
         });
         y += 28;
 
         // Type
-        Lab("Proxy type", y);
+        Lab(L.FieldProxyType, y);
         _proxyType.DropDownStyle = ComboBoxStyle.DropDownList;
         _proxyType.SetBounds(fieldX, y, 180, 24);
         foreach (var pt in ProxyTypes) _proxyType.Items.Add(pt.Label);
@@ -236,11 +242,11 @@ public sealed class ProfileForm : Form
         y += row;
 
         // Host + port
-        Lab("Host", y);
+        Lab(L.FieldHost, y);
         _proxyHost.SetBounds(fieldX, y, fieldW - 108, 24);
         _proxyHost.Text = p.ProxyHost;
         Controls.Add(_proxyHost);
-        Controls.Add(new Label { Text = "Port", Left = fieldX + fieldW - 96, Top = y + 4, Width = 32, ForeColor = _t.SubText });
+        Controls.Add(new Label { Text = L.FieldPort, Left = fieldX + fieldW - 96, Top = y + 4, Width = 32, ForeColor = _t.SubText });
         _proxyPort.SetBounds(fieldX + fieldW - 60, y, 70, 24);
         _proxyPort.Minimum = 1; _proxyPort.Maximum = 65535;
         _proxyPort.Value = Clamp(p.ProxyPort <= 0 ? 1080 : p.ProxyPort, 1, 65535);
@@ -248,20 +254,20 @@ public sealed class ProfileForm : Form
         y += row;
 
         // User
-        Lab("Username", y);
+        Lab(L.FieldUser, y);
         _proxyUser.SetBounds(fieldX, y, 220, 24);
         _proxyUser.Text = p.ProxyUser;
         Controls.Add(_proxyUser);
-        Controls.Add(new Label { Text = "(optional)", Left = fieldX + 230, Top = y + 4, Width = 90, ForeColor = _t.SubText });
+        Controls.Add(new Label { Text = L.FieldOptional, Left = fieldX + 230, Top = y + 4, Width = 90, ForeColor = _t.SubText });
         y += row;
 
         // Password + Test
-        Lab("Password", y);
+        Lab(L.FieldPassword, y);
         _proxyPass.SetBounds(fieldX, y, 220, 24);
         _proxyPass.UseSystemPasswordChar = true;
         _proxyPass.Text = p.GetProxyPassword();
         Controls.Add(_proxyPass);
-        _proxyTest.Text = "Test";
+        _proxyTest.Text = L.ProxyTest;
         _proxyTest.SetBounds(fieldX + 230, y - 2, 92, 28);
         _proxyTest.Click += (_, _) => RunProxyTest();
         Controls.Add(_proxyTest);
@@ -273,21 +279,25 @@ public sealed class ProfileForm : Form
         _proxyResult.AutoEllipsis = true;
         Controls.Add(_proxyResult);
         y += 24;
-        Hint("Covers the app's Java network traffic and the runtime's push client.\n" +
-             "Not covered: calls / UDP, sockets opened by the app's native code.", labelX, y, fieldX + wideW - labelX, 34);
+        Hint(L.HintProxy, labelX, y, fieldX + wideW - labelX, 34);
         y += 42;
 
         _proxyFields.AddRange(new Control[] { _proxyHost, _proxyPort, _proxyUser, _proxyPass, _proxyTest });
         UpdateProxyEnabled();
 
+        // Paths, hosts, ports, credentials and JVM options read left to right in any language.
+        foreach (var c in new Control[] { _apk, _data, _jvm, _proxyHost, _proxyPort, _proxyUser, _proxyPass }) L.KeepLtr(c);
+
         // ----- footer: OK / Cancel on the chrome color, like a Windows 11 dialog -----
+        // The panel does not mirror its children, so in RTL the buttons are placed from the left.
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 64, BackColor = _t.Back };
         footer.Paint += (_, e) => { using var pen = new Pen(_t.Border); e.Graphics.DrawLine(pen, 0, 0, footer.Width, 0); };
-        int right = fieldX + wideW;
-        var cancel = new ThemedButton { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 100, Height = 32 };
-        var ok = new ThemedButton { Text = "OK", Accent = true, DialogResult = DialogResult.OK, Width = 100, Height = 32 };
-        cancel.SetBounds(right - 100, 16, 100, 32);
-        ok.SetBounds(right - 208, 16, 100, 32);
+        int right = fieldX + wideW, width = right + 20;
+        int X(int x, int w) => L.Rtl ? width - x - w : x;
+        var cancel = new ThemedButton { Text = L.Cancel, DialogResult = DialogResult.Cancel, Width = 100, Height = 32 };
+        var ok = new ThemedButton { Text = L.Ok, Accent = true, DialogResult = DialogResult.OK, Width = 100, Height = 32 };
+        cancel.SetBounds(X(right - 100, 100), 16, 100, 32);
+        ok.SetBounds(X(right - 208, 100), 16, 100, 32);
         ok.Click += (_, _) => { if (Collect()) DialogResult = DialogResult.OK; else DialogResult = DialogResult.None; };
         footer.Controls.Add(ok);
         footer.Controls.Add(cancel);
@@ -302,7 +312,7 @@ public sealed class ProfileForm : Form
             foreach (var nu in new[] { _w, _h, _density, _proxyPort }) nu.BorderStyle = BorderStyle.FixedSingle;
         }
 
-        ClientSize = new Size(right + 20, y + footer.Height);
+        ClientSize = new Size(width, y + footer.Height);
         ResumeLayout(false);
         PerformLayout();
 
@@ -351,10 +361,10 @@ public sealed class ProfileForm : Form
     {
         var apk = _apk.Text.Trim();
         var name = string.IsNullOrWhiteSpace(_name.Text) ? "?" : _name.Text.Trim();
-        _title.Text = string.IsNullOrWhiteSpace(_name.Text) ? Text : name;
-        if (string.IsNullOrWhiteSpace(apk)) _subtitle.Text = "No APK selected  •  " + Text;
-        else if (!File.Exists(apk)) _subtitle.Text = $"{Path.GetFileName(apk)}  •  file not found";
-        else _subtitle.Text = $"{Path.GetFileName(apk)}  •  {Text}";
+        _title.Text = string.IsNullOrWhiteSpace(_name.Text) ? Text : L.Iso(name);
+        if (string.IsNullOrWhiteSpace(apk)) _subtitle.Text = L.NoApkSelected + "  •  " + Text;
+        else if (!File.Exists(apk)) _subtitle.Text = $"{L.Ltr(Path.GetFileName(apk))}  •  {L.FileNotFound}";
+        else _subtitle.Text = $"{L.Ltr(Path.GetFileName(apk))}  •  {Text}";
         _icon.SetIcon(AppIcons.Get(apk), name);
     }
 
@@ -379,13 +389,13 @@ public sealed class ProfileForm : Form
     private bool Collect()
     {
         if (string.IsNullOrWhiteSpace(_name.Text))
-        { MessageBox.Show(this, "Give the profile a name.", "Missing name"); return false; }
+        { Msg.Show(this, L.GiveName, L.MissingName); return false; }
         if (string.IsNullOrWhiteSpace(_data.Text))
-        { MessageBox.Show(this, "Give the profile a data root.", "Missing data root"); return false; }
+        { Msg.Show(this, L.GiveDataRoot, L.MissingDataRoot); return false; }
 
         var kind = ProxyTypes[Math.Max(0, _proxyType.SelectedIndex)].Kind;
         if (kind != ProxyKind.None && string.IsNullOrWhiteSpace(_proxyHost.Text))
-        { MessageBox.Show(this, "Give the proxy a host, or set the proxy type to None.", "Missing proxy host"); return false; }
+        { Msg.Show(this, L.GiveProxyHost, L.MissingProxyHost); return false; }
 
         Result.Name = _name.Text.Trim();
         Result.ApkPath = _apk.Text.Trim();
@@ -424,13 +434,13 @@ public sealed class ProfileForm : Form
     private async void RunProxyTest()
     {
         var cfg = CurrentProxyConfig();
-        if (cfg == null) { _proxyResult.ForeColor = _t.SubText; _proxyResult.Text = "Choose a proxy type and host first."; return; }
+        if (cfg == null) { _proxyResult.ForeColor = _t.SubText; _proxyResult.Text = L.ProxyChooseFirst; return; }
 
         _testCts?.Cancel();
         _testCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         _proxyTest.Enabled = false;
         _proxyResult.ForeColor = _t.SubText;
-        _proxyResult.Text = "Testing…";
+        _proxyResult.Text = L.ProxyTesting;
         try
         {
             var r = await ProxyUpstream.TestAsync(cfg, _testCts.Token);

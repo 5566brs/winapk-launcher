@@ -8,13 +8,17 @@ namespace WinApkLauncher;
 
 /// <summary>
 /// The startup window, shown from Launch until the app's first window opens: the app's icon and
-/// name, "Starting…" with an indeterminate bar, the step read from the run log and the time so
-/// far. Borderless, in the launcher's theme and topmost while the app starts. If the runtime exits
-/// first, it says so and offers Open log and Open logs folder. "Hide" closes only this window.
+/// name, "Starting…" with an indeterminate bar, the step read from the run log, the newest line of
+/// that log and the time so far. Borderless, in the launcher's theme and topmost while the app
+/// starts, and mirrored in a right-to-left language. "Open log" opens the run log at any time;
+/// "Hide" closes only this window. When neither the log nor the CPU time has moved for
+/// <see cref="StartupWatch.StallAfter"/>, it says the app may be stuck and offers Open log and Stop;
+/// when only the log is quiet, it says the CPU is busy. If the runtime exits first, it says so and
+/// offers Open log and Open logs folder.
 ///
 /// In the launcher window, MainForm's startup timer drives it (<see cref="RefreshPhase"/>,
-/// <see cref="ShowExited"/>). For --launch and desktop shortcuts, a separate
-/// <c>WinApkLauncher.exe --splash</c> process shows it and follows the runtime itself
+/// <see cref="ShowExited"/>, <see cref="StopProcess"/>). For --launch and desktop shortcuts, a
+/// separate <c>WinApkLauncher.exe --splash</c> process shows it and follows the runtime itself
 /// (<see cref="Follow"/>). Any later launch of the same app finds it by a window property keyed
 /// on the app folder (<see cref="TryBringToFront"/>) and brings it forward instead of starting
 /// anything.
@@ -32,13 +36,23 @@ internal sealed class SplashForm : Form
 
     private readonly PictureBox _icon = new();
     private readonly Label _name = new();
+    private readonly FlowLayoutPanel _links = new();
+    private readonly LinkLabel _openLog = new();
     private readonly LinkLabel _hide = new();
     private readonly Label _state = new();
     private readonly Label _elapsed = new();
     private readonly IndeterminateBar _bar = new();
     private readonly Label _phase = new();
+    private readonly Label _lastLine = new();
+    private readonly FlowLayoutPanel _hint = new();
+    private readonly Label _hintText = new();
+    private readonly LinkLabel _hintOpenLog = new();
+    private readonly Label _hintSep = new();
+    private readonly LinkLabel _hintStop = new();
     private readonly FlowLayoutPanel _buttons = new();
+    private readonly Label _version = new();
     private bool _failed;
+    private bool _stopping;
     private string? _logPath;
 
     private SafeProcessHandle? _process;
@@ -46,6 +60,14 @@ internal sealed class SplashForm : Form
     private System.Windows.Forms.Timer? _follow;
 
     public StartupWatch Watch { get; }
+
+    /// <summary>
+    /// Ends the runtime behind this window after the user confirmed Stop; returns false when it could
+    /// not be stopped. The launcher window sets it so the exit is not reported as a crash; without it,
+    /// the followed process (<see cref="Follow"/>) is ended.
+    /// </summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Func<bool>? StopProcess { get; set; }
 
     /// <param name="key">The app folder's key (<see cref="KeyFor"/>): how other launches find this window.</param>
     /// <param name="anchor">The launcher window to center on; null centers on the screen with the mouse.</param>
@@ -65,13 +87,14 @@ internal sealed class SplashForm : Form
         ShowInTaskbar = inTaskbar;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        Text = $"Starting {profile.Name}";
+        Text = L.SplashTitle(profile.Name);
         Font = _t.UiFont(9f);
         BackColor = _t.Content;
         ForeColor = _t.Text;
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Padding = new Padding(1);
+        L.ApplyDirection(this);
 
         var root = new TableLayoutPanel
         {
@@ -97,7 +120,7 @@ internal sealed class SplashForm : Form
             Padding = Padding.Empty,
             BackColor = _t.Content,
         };
-        Label L(Label l, string s, Color c, Padding m)
+        Label Lb(Label l, string s, Color c, Padding m)
         {
             l.AutoSize = true;
             l.Text = s;
@@ -106,39 +129,91 @@ internal sealed class SplashForm : Form
             l.UseMnemonic = false;
             return l;
         }
-        L(_name, profile.Name, _t.Text, new Padding(0, 0, 8, 2));
+        var tips = new ToolTip();
+        Disposed += (_, _) => tips.Dispose();
+        var linkColor = _t.Dark ? Theme.Blend(_t.Accent, Color.White, 0.35f) : _t.Accent;
+        LinkLabel Link(LinkLabel l, string s, string? tip, Action click)
+        {
+            l.AutoSize = true;
+            l.Text = s;
+            l.LinkBehavior = LinkBehavior.HoverUnderline;
+            l.LinkColor = l.ActiveLinkColor = linkColor;
+            l.UseMnemonic = false;
+            l.LinkClicked += (_, _) => click();
+            if (tip != null) tips.SetToolTip(l, tip);
+            return l;
+        }
+
+        Lb(_name, profile.Name, _t.Text, new Padding(0, 0, 8, 2));
+        _name.RightToLeft = L.StartsRtl(profile.Name) ? RightToLeft.Yes : RightToLeft.No; // it may wrap: its own direction
         _name.Font = new Font(_t.SemiboldFamily, 10.5f);
         _name.AutoEllipsis = true;
-        _name.MaximumSize = new Size(TextWidth - 50, 0);
+        _name.MaximumSize = new Size(TextWidth - 130, 0);
         text.Controls.Add(_name, 0, 0);
 
-        _hide.AutoSize = true;
-        _hide.Text = "Hide";
-        _hide.LinkBehavior = LinkBehavior.HoverUnderline;
-        _hide.LinkColor = _hide.ActiveLinkColor = _t.Dark ? Theme.Blend(_t.Accent, Color.White, 0.35f) : _t.Accent;
-        _hide.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _hide.Margin = new Padding(0, 2, 0, 0);
-        _hide.LinkClicked += (_, _) => Close();
-        var tips = new ToolTip();
-        tips.SetToolTip(_hide, "Close this window. The app keeps starting.");
-        Disposed += (_, _) => tips.Dispose();
-        text.Controls.Add(_hide, 1, 0);
+        // Open log (at any time) and Hide, at the far end of the name's row.
+        _links.AutoSize = true;
+        _links.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _links.WrapContents = false;
+        _links.Margin = new Padding(0, 2, 0, 0);
+        _links.Padding = Padding.Empty;
+        _links.BackColor = _t.Content;
+        _links.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        Link(_openLog, L.SplashOpenLog, L.SplashOpenLogTip, OpenLog).Margin = new Padding(0, 0, 10, 0);
+        Link(_hide, L.SplashHide, L.SplashHideTip, Close).Margin = Padding.Empty;
+        _links.Controls.Add(_openLog);
+        _links.Controls.Add(_hide);
+        text.Controls.Add(_links, 1, 0);
 
-        L(_state, "Starting…", _t.Text, new Padding(0, 2, 8, 6));
+        Lb(_state, L.PhaseStarting, _t.Text, new Padding(0, 2, 8, 6));
         text.Controls.Add(_state, 0, 1);
-        L(_elapsed, "0:00", _t.SubText, new Padding(0, 2, 0, 6));
+        Lb(_elapsed, "0:00", _t.SubText, new Padding(0, 2, 0, 6));
         _elapsed.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         text.Controls.Add(_elapsed, 1, 1);
 
         _bar.Size = new Size(TextWidth, 4);
         _bar.Margin = new Padding(0, 0, 0, 8);
+        _bar.AccessibleName = L.SplashBarName;
         text.Controls.Add(_bar, 0, 2);
         text.SetColumnSpan(_bar, 2);
 
-        L(_phase, watch.SplashPhaseText, _t.SubText, new Padding(0, 0, 0, 0));
+        Lb(_phase, watch.SplashPhaseText, _t.SubText, new Padding(0, 0, 0, 0));
         _phase.MaximumSize = new Size(TextWidth, 0);
         text.Controls.Add(_phase, 0, 3);
         text.SetColumnSpan(_phase, 2);
+
+        // The newest line of the run log: one line, small, ellipsized, and left to right (log lines are English).
+        _lastLine.AutoSize = false;
+        _lastLine.AutoEllipsis = true;
+        _lastLine.UseMnemonic = false;
+        _lastLine.Font = new Font(_t.FontFamily, 8f);
+        _lastLine.ForeColor = _t.SubText;
+        _lastLine.Size = new Size(TextWidth, TextRenderer.MeasureText("Ag", _lastLine.Font).Height + 2);
+        _lastLine.Margin = new Padding(0, 6, 0, 0);
+        _lastLine.Visible = false;
+        L.KeepLtr(_lastLine);
+        if (L.Rtl) _lastLine.TextAlign = ContentAlignment.TopRight; // flush with the text above it
+        text.Controls.Add(_lastLine, 0, 4);
+        text.SetColumnSpan(_lastLine, 2);
+
+        // The stall hint: "No progress for N min. … Open log / Stop", or "Still working (CPU busy)…".
+        _hint.AutoSize = true;
+        _hint.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _hint.WrapContents = true;
+        _hint.MaximumSize = new Size(TextWidth, 0);
+        _hint.Margin = new Padding(0, 8, 0, 0);
+        _hint.Padding = Padding.Empty;
+        _hint.BackColor = _t.Content;
+        _hint.Visible = false;
+        Lb(_hintText, "", CautionColor, new Padding(0, 0, 6, 0));
+        _hintText.MaximumSize = new Size(TextWidth, 0);
+        Link(_hintOpenLog, L.SplashOpenLog, L.SplashOpenLogTip, OpenLog).Margin = Padding.Empty;
+        Lb(_hintSep, "/", _t.SubText, new Padding(4, 0, 4, 0));
+        // The confirmation opens after the click has been handled, not inside it.
+        Link(_hintStop, L.StallStop, null, () => BeginInvoke(OnStopClicked)).Margin = Padding.Empty;
+        _hint.Controls.AddRange(new Control[] { _hintText, _hintOpenLog, _hintSep, _hintStop });
+        text.Controls.Add(_hint, 0, 5);
+        text.SetColumnSpan(_hint, 2);
 
         _buttons.AutoSize = true;
         _buttons.AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -162,11 +237,17 @@ internal sealed class SplashForm : Form
             _buttons.Controls.Add(b);
             return b;
         }
-        B("Open log", true, () => { if (_logPath != null) ShellOpen.InNotepad(_logPath); });
-        B("Open logs folder", false, () => ShellOpen.LogsFolder(_logPath));
-        B("Close", false, Close);
-        text.Controls.Add(_buttons, 0, 4);
+        B(L.OpenLog, true, OpenLog);
+        B(L.OpenLogsFolder, false, () => ShellOpen.LogsFolder(_logPath));
+        B(L.Close, false, Close);
+        text.Controls.Add(_buttons, 0, 6);
         text.SetColumnSpan(_buttons, 2);
+
+        // The launcher's name and version, small.
+        Lb(_version, L.Ltr(L.MainTitle), Theme.Blend(_t.SubText, _t.Content, 0.25f), new Padding(0, 10, 0, 0));
+        _version.Font = new Font(_t.FontFamily, 7.5f);
+        text.Controls.Add(_version, 0, 7);
+        text.SetColumnSpan(_version, 2);
 
         root.Controls.Add(text, 1, 0);
         Controls.Add(root);
@@ -178,14 +259,40 @@ internal sealed class SplashForm : Form
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
 
+    /// <summary>The Windows 11 caution text color: amber on dark, dark amber on light.</summary>
+    private Color CautionColor => _t.Dark ? Color.FromArgb(0xFC, 0xE1, 0x00) : Color.FromArgb(0x9D, 0x5D, 0x00);
+
     // ----- what the window shows -----
 
-    /// <summary>Show the watch's current step and the time so far.</summary>
+    /// <summary>Show the watch's current step, its newest log line, the stall hint and the time so far.</summary>
     public void RefreshPhase()
     {
         if (_failed || IsDisposed) return;
+        SuspendLayout();
         _phase.Text = Watch.SplashPhaseText;
         _elapsed.Text = Watch.ElapsedText;
+        ShowLastLine();
+        _openLog.Visible = _logPath != null;
+        var (state, minutes) = _stopping ? (StallState.None, 0) : Watch.Stall();
+        if (state == StallState.None) _hint.Visible = false;
+        else
+        {
+            bool stalled = state == StallState.Stalled;
+            _hintText.Text = stalled ? L.StallNoProgress(minutes) : L.StallCpuBusy;
+            _hintText.ForeColor = stalled ? CautionColor : _t.SubText;
+            _hintOpenLog.Visible = stalled && _logPath != null;
+            _hintSep.Visible = stalled && _logPath != null;
+            _hintStop.Visible = stalled;
+            _hint.Visible = true;
+        }
+        ResumeLayout(true);
+    }
+
+    private void ShowLastLine()
+    {
+        var line = Watch.LastLogLine;
+        _lastLine.Text = line ?? "";
+        _lastLine.Visible = line != null;
     }
 
     /// <summary>The runtime exited before its window opened: say so, with the log and its folder.</summary>
@@ -196,29 +303,55 @@ internal sealed class SplashForm : Form
         _logPath = logPath ?? _logPath;
         StopFollowing();
         TopMost = false;
+        SuspendLayout();
         _bar.Visible = false;
         _elapsed.Visible = false;
-        _hide.Visible = false;
-        _state.Text = code == RuntimeInstance.ExitAlreadyRunning ? "Already running" : "Couldn't start";
+        _links.Visible = false;
+        _hint.Visible = false;
+        ShowLastLine();
+        _state.Text = code == RuntimeInstance.ExitAlreadyRunning ? L.SplashAlreadyRunning : L.SplashCouldNotStart;
         _state.ForeColor = code == RuntimeInstance.ExitAlreadyRunning ? _t.Text
             : _t.Dark ? Color.FromArgb(0xFF, 0x99, 0xA4) : Color.FromArgb(0xC4, 0x2B, 0x1C);
         _state.Font = new Font(_t.SemiboldFamily, 9f);
         _phase.Text = code == RuntimeInstance.ExitAlreadyRunning
-            ? $"{_profile.Name} is already running, or still starting in the background."
-            : $"{_profile.Name} exited with code {code} before its window opened." +
-              (_logPath != null ? "\nThe run log has the details." : "");
+            ? L.AlreadyRunningHeading(_profile.Name)
+            : L.SplashExited(_profile.Name, code) + (_logPath != null ? "\n" + L.SplashLogHasDetails : "");
         _buttons.Controls[0].Enabled = _logPath != null;
         _buttons.Visible = true;
-        Text = $"{_profile.Name} couldn't start";
+        Text = L.SplashFailedTitle(_profile.Name);
+        ResumeLayout(true);
         PlaceOnScreen();
         try { Activate(); } catch { }
     }
 
-    /// <summary>Follows a runtime by itself (the --splash process): log, exit and first window.</summary>
+    private void OpenLog()
+    {
+        if (_logPath != null) ShellOpen.InNotepad(_logPath);
+    }
+
+    /// <summary>The stall hint's Stop: asks like Stop it, then ends the runtime and its child processes.</summary>
+    private void OnStopClicked()
+    {
+        if (_failed || _stopping) return;
+        using (var confirm = LauncherDialog.StopConfirm(_profile.Name, 1))
+        {
+            confirm.ShowDialog(this);
+            if (confirm.Result != "stop" || IsDisposed || _failed) return;
+        }
+        _stopping = true;
+        RefreshPhase();
+        bool stopped = StopProcess != null ? StopProcess() : _pid > 0 && RuntimeInstance.Stop(_pid);
+        if (stopped) return; // the exit closes this window
+        _stopping = false;
+        Msg.Show(this, L.CouldNotStop(1, _profile.Name), L.StopTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    /// <summary>Follows a runtime by itself (the --splash process): log, CPU time, exit and first window.</summary>
     public void Follow(SafeProcessHandle process, int pid)
     {
         _process = process;
         _pid = pid;
+        Watch.AttachProcess(pid);
         _follow = new System.Windows.Forms.Timer { Interval = 500 };
         _follow.Tick += (_, _) => FollowTick();
         _follow.Start();
@@ -234,7 +367,7 @@ internal sealed class SplashForm : Form
         {
             int code = GetExitCodeProcess(_process, out uint c) ? unchecked((int)c) : -1;
             StopFollowing();
-            if (code == 0) Close();
+            if (code == 0 || _stopping) Close();
             else ShowExited(code);
             return;
         }
@@ -426,7 +559,7 @@ internal sealed class SplashForm : Form
     private static extern bool GetExitCodeProcess(SafeProcessHandle h, out uint code);
 }
 
-/// <summary>A thin bar with an accent segment sliding across it: progress of unknown length.</summary>
+/// <summary>A thin bar with an accent segment sliding across it (right to left in RTL): progress of unknown length.</summary>
 internal sealed class IndeterminateBar : Control
 {
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 30 };
@@ -438,7 +571,6 @@ internal sealed class IndeterminateBar : Control
                  ControlStyles.ResizeRedraw, true);
         _timer.Tick += (_, _) => { _pos = (_pos + 0.012f) % 1.4f; Invalidate(); };
         AccessibleRole = AccessibleRole.ProgressBar;
-        AccessibleName = "Starting";
     }
 
     protected override void OnVisibleChanged(EventArgs e)
@@ -465,6 +597,7 @@ internal sealed class IndeterminateBar : Control
             g.FillPath(track, path);
         float segW = Width * 0.32f;
         float x = (_pos - 0.4f) * Width;
+        if (RightToLeft == RightToLeft.Yes) x = Width - x - segW;
         var seg = RectangleF.Intersect(new RectangleF(x, 0, segW, h), new RectangleF(0, 0, Width, h));
         if (seg.Width > 0.5f)
         {
@@ -515,7 +648,8 @@ internal static class SplashProcess
         int pid = GetProcessId(process);
         if (pid == 0) { process.Dispose(); return 2; }
         var store = LauncherStore.Load();
-        var p = store.Find(args[1]) ?? new Profile { Id = args[1], Name = "App" };
+        L.Apply(store.Language);
+        var p = store.Find(args[1]) ?? new Profile { Id = args[1], Name = L.SplashDefaultName };
         var log = args.Length > 3 && args[3].Length > 0 ? args[3] : null;
 
         ApplicationConfiguration.Initialize();

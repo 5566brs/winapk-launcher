@@ -8,6 +8,8 @@ internal sealed record DialogButton(string Id, string Text, bool Accent = false,
 /// log lines and a row of buttons. <see cref="ShowDialog(IWin32Window)"/> for a question, or
 /// <see cref="Form.Show(IWin32Window)"/> for a notice that does not block the launcher.
 /// <see cref="Result"/> is the id of the button that closed it (null: closed another way).
+/// Mirrored in a right-to-left language: the glyph and the buttons start at the right; the log
+/// lines stay left to right.
 /// </summary>
 internal sealed class LauncherDialog : Form
 {
@@ -44,6 +46,7 @@ internal sealed class LauncherDialog : Form
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         KeyPreview = true;
+        L.ApplyDirection(this);
 
         var root = new TableLayoutPanel
         {
@@ -91,7 +94,7 @@ internal sealed class LauncherDialog : Form
 
         if (details != null)
         {
-            _details = new TextBox
+            _details = L.KeepLtr(new TextBox
             {
                 Multiline = true,
                 ReadOnly = true,
@@ -105,13 +108,13 @@ internal sealed class LauncherDialog : Form
                 Margin = new Padding(0, 10, 0, 0),
                 Text = details.Replace("\r\n", "\n").Replace("\n", Environment.NewLine),
                 TabStop = false,
-            };
+            });
             _details.HandleCreated += (_, _) => _t.ApplyControlTheme(_details);
             content.Controls.Add(_details, 1, 2);
         }
         root.Controls.Add(content, 0, 0);
 
-        // Footer on the chrome color, buttons on the right, like the Edit dialog.
+        // Footer on the chrome color, buttons on the right (on the left in RTL), like the Edit dialog.
         var footer = new TableLayoutPanel
         {
             BackColor = _t.Back,
@@ -166,6 +169,15 @@ internal sealed class LauncherDialog : Form
         };
     }
 
+    /// <summary>"Stop {name}?": Stop it (id "stop") or Cancel, the default. Used by Stop it and the startup window's Stop.</summary>
+    public static LauncherDialog StopConfirm(string name, int processes) =>
+        new(L.StopTitle, L.StopHeading(name), L.StopBody(name, processes),
+            new[]
+            {
+                new DialogButton("stop", L.StopConfirm),
+                new DialogButton("cancel", L.Cancel, Accent: true),
+            }, Kind.Warning);
+
     /// <summary>Replace the heading and body of an open notice (another launch of the same app).</summary>
     public void UpdateText(string heading, string body)
     {
@@ -198,9 +210,9 @@ internal sealed class LauncherDialog : Form
         int px = LogicalToDeviceUnits(28);
         var (glyph, color) = _kind switch
         {
-            Kind.Warning => ('', Color.FromArgb(0xE0, 0x9B, 0x00)),
-            Kind.Error => ('', _t.Dark ? Color.FromArgb(0xFF, 0x99, 0xA4) : Color.FromArgb(0xC4, 0x2B, 0x1C)),
-            _ => ('', _t.Accent),
+            Kind.Warning => ('\uE7BA', Color.FromArgb(0xE0, 0x9B, 0x00)),
+            Kind.Error => ('\uEA39', _t.Dark ? Color.FromArgb(0xFF, 0x99, 0xA4) : Color.FromArgb(0xC4, 0x2B, 0x1C)),
+            _ => ('\uE946', _t.Accent),
         };
         var old = _glyph.Image;
         _glyph.Image = _t.Glyph(glyph, px, color);
@@ -243,5 +255,18 @@ internal sealed class LauncherDialog : Form
             catch (ArgumentException) { }
         }
         return FontFamily.GenericMonospace.Name;
+    }
+}
+
+/// <summary>Message boxes that read right to left in a right-to-left language.</summary>
+internal static class Msg
+{
+    public static DialogResult Show(IWin32Window? owner, string text, string caption,
+        MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.None)
+    {
+        var options = L.Rtl ? MessageBoxOptions.RtlReading | MessageBoxOptions.RightAlign : 0;
+        return owner != null
+            ? MessageBox.Show(owner, text, caption, buttons, icon, MessageBoxDefaultButton.Button1, options)
+            : MessageBox.Show(text, caption, buttons, icon, MessageBoxDefaultButton.Button1, options);
     }
 }

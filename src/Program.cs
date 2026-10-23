@@ -19,29 +19,31 @@ internal static class Program
             return Cli.Run(args);
 
         // GUI options: --theme light|dark (override the Windows app theme),
+        //              --lang auto|en|he (this run's language instead of the saved setting; not saved),
         //              --screenshot <dir> (save window captures for a UI check, then exit; never launches),
         //              --add <package> or a bare package path (Explorer's "Open with WinApk Launcher"):
         //              open the Add dialog prefilled with that file.
-        string? theme = null, shots = null, add = null;
+        string? theme = null, shots = null, add = null, lang = null;
         for (int i = 0; i < args.Length; i++)
         {
             var a = args[i];
             bool hasValue = i + 1 < args.Length;
             if (a.Equals("--theme", StringComparison.OrdinalIgnoreCase) && hasValue) theme = args[++i];
+            else if (a.Equals("--lang", StringComparison.OrdinalIgnoreCase) && hasValue) lang = args[++i];
             else if (a.Equals("--screenshot", StringComparison.OrdinalIgnoreCase) && hasValue) shots = args[++i];
             else if (a.Equals("--add", StringComparison.OrdinalIgnoreCase) && hasValue) add = args[++i];
             else if (!a.StartsWith('-')) add ??= a;
         }
         if (add != null) { try { add = Path.GetFullPath(add.Trim().Trim('"')); } catch { } }
-        return RunGui(theme, shots, add);
+        return RunGui(theme, shots, add, lang);
     }
 
     /// <summary>The GUI flags, or a bare file path; everything else is a console command.</summary>
     private static bool IsGuiStart(string first) =>
-        first.ToLowerInvariant() is "--theme" or "--screenshot" or "--add" ||
+        first.ToLowerInvariant() is "--theme" or "--lang" or "--screenshot" or "--add" ||
         (!first.StartsWith('-') && first != "/?");
 
-    private static int RunGui(string? theme, string? shots, string? add)
+    private static int RunGui(string? theme, string? shots, string? add, string? lang)
     {
         bool primary = false;
         if (shots != null)
@@ -58,8 +60,10 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         Theme.Initialize(theme);
-        var suffix = theme != null && shots != null ? "-" + theme.ToLowerInvariant() : "";
-        var form = new MainForm(shots, suffix, add);
+        // Screenshot file names say what was forced: tiles-he-dark.png.
+        var suffix = shots == null ? "" :
+            (lang != null ? "-" + L.NormalizeSetting(lang) : "") + (theme != null ? "-" + theme.ToLowerInvariant() : "");
+        var form = new MainForm(shots, suffix, add, lang);
         if (primary) SingleInstance.Listen(form.HandleExternalRequest);
         Application.Run(form);
         return 0;
@@ -164,7 +168,8 @@ internal static class Cli
                 Console.WriteLine("  <package>                 open the GUI with the Add dialog prefilled (.apk/.xapk/.apkm/.apks)");
                 Console.WriteLine("  --add <package>           the same");
                 Console.WriteLine("  --theme light|dark        open the GUI in a forced theme");
-                Console.WriteLine("  --screenshot <dir>        open the GUI, save tiles/list/edit captures, exit");
+                Console.WriteLine("  --lang auto|en|he         open the GUI in that language (not saved)");
+                Console.WriteLine("  --screenshot <dir>        open the GUI, save captures of its windows, exit (never launches)");
                 Console.WriteLine("  --list                    list profiles");
                 Console.WriteLine("  --launch <name>           launch a profile (proxy adapter included) and leave it running,");
                 Console.WriteLine("                            with a startup window until the app's window opens;");
@@ -255,7 +260,7 @@ internal static class Cli
                     how = " Opened a startup window for it.";
                 else notice = !_hasConsole && !_redirected;
                 Console.WriteLine($"RESULT: {p.Name} is still starting{(pids.Length > 0 ? $" (pid {pids})" : "")}. {why}{how} Nothing was started.");
-                if (notice) ShowNotice($"{p.Name} is still starting.", why);
+                if (notice) ShowNotice(store, p.Name);
             }
             return RuntimeInstance.ExitAlreadyRunning;
         }
@@ -351,15 +356,16 @@ internal static class Cli
         return 0;
     }
 
-    /// <summary>The "still starting" notice for a launch without a console (a desktop shortcut).</summary>
-    private static void ShowNotice(string heading, string body)
+    /// <summary>The "still starting" notice for a launch without a console (a desktop shortcut), in the GUI's language.</summary>
+    private static void ShowNotice(LauncherStore store, string name)
     {
         try
         {
             ApplicationConfiguration.Initialize();
             Theme.Initialize(null);
-            using var dlg = new LauncherDialog(AppInfo.ProductName, heading, body,
-                new[] { new DialogButton("ok", "OK", Accent: true) })
+            L.Apply(store.Language);
+            using var dlg = new LauncherDialog(AppInfo.ProductName, L.StillStartingHeading(name), L.StillStartingBody,
+                new[] { new DialogButton("ok", L.Ok, Accent: true) })
             {
                 TopMost = true,
                 ShowInTaskbar = true,
@@ -392,11 +398,12 @@ internal static class Cli
         return 0;
     }
 
-    /// <summary>The built-in checks: the runtime lock name mirror and the startup log parser.</summary>
+    /// <summary>The built-in checks: the runtime lock name mirror, the startup log parser and the string table.</summary>
     private static int SelfTest()
     {
         var failures = RuntimeInstance.SelfTest();
         failures.AddRange(StartupWatch.SelfTest());
+        failures.AddRange(L.SelfTest());
         foreach (var f in failures) Console.WriteLine("FAIL: " + f);
         Console.WriteLine(failures.Count == 0 ? "self-test: OK" : $"self-test: {failures.Count} failure(s)");
         return failures.Count == 0 ? 0 : 1;

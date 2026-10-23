@@ -30,15 +30,15 @@ public static class ProxyUpstream
         try
         {
             try { await sock.ConnectAsync(cfg.Host, cfg.Port, ct); }
-            catch (OperationCanceledException) { throw new ProxyException("timed out connecting to the proxy"); }
-            catch (SocketException ex) { throw new ProxyException($"cannot reach proxy {cfg.Host}:{cfg.Port} ({ex.SocketErrorCode})"); }
+            catch (OperationCanceledException) { throw new ProxyException(L.ProxyConnectTimeout); }
+            catch (SocketException ex) { throw new ProxyException(L.ProxyUnreachable($"{cfg.Host}:{cfg.Port}", ex.SocketErrorCode.ToString())); }
 
             switch (cfg.Kind)
             {
                 case ProxyKind.Socks5: await Socks5(sock, cfg, host, port, ct); break;
                 case ProxyKind.Socks4: await Socks4(sock, cfg, host, port, ct); break;
                 case ProxyKind.Http: await HttpConnect(sock, cfg, host, port, ct); break;
-                default: throw new ProxyException("no proxy configured");
+                default: throw new ProxyException(L.ProxyNotConfigured);
             }
             return sock;
         }
@@ -57,15 +57,15 @@ public static class ProxyUpstream
         var greet = cfg.HasAuth ? new byte[] { 0x05, 0x02, 0x00, 0x02 } : new byte[] { 0x05, 0x01, 0x00 };
         await Send(s, greet, ct);
         var sel = await Recv(s, 2, ct);
-        if (sel[0] != 0x05) throw new ProxyException("not a SOCKS5 proxy");
+        if (sel[0] != 0x05) throw new ProxyException(L.ProxyNotSocks5);
         byte method = sel[1];
-        if (method == 0xFF) throw new ProxyException(cfg.HasAuth ? "proxy rejected the offered auth methods" : "proxy requires authentication");
+        if (method == 0xFF) throw new ProxyException(cfg.HasAuth ? L.ProxyRejectedAuthMethods : L.ProxyNeedsAuth);
         if (method == 0x02)
         {
-            if (!cfg.HasAuth) throw new ProxyException("proxy requires a username and password");
+            if (!cfg.HasAuth) throw new ProxyException(L.ProxyNeedsUserPass);
             var u = Encoding.UTF8.GetBytes(cfg.User);
             var p = Encoding.UTF8.GetBytes(cfg.Password);
-            if (u.Length > 255 || p.Length > 255) throw new ProxyException("username/password too long for SOCKS5");
+            if (u.Length > 255 || p.Length > 255) throw new ProxyException(L.ProxyUserPassTooLong);
             var auth = new byte[3 + u.Length + p.Length];
             int i = 0;
             auth[i++] = 0x01;
@@ -73,10 +73,10 @@ public static class ProxyUpstream
             auth[i++] = (byte)p.Length; Array.Copy(p, 0, auth, i, p.Length);
             await Send(s, auth, ct);
             var ar = await Recv(s, 2, ct);
-            if (ar[1] != 0x00) throw new ProxyException("proxy authentication failed (bad username or password)");
+            if (ar[1] != 0x00) throw new ProxyException(L.ProxyAuthFailed);
         }
         else if (method != 0x00)
-            throw new ProxyException($"proxy chose an unsupported SOCKS5 auth method (0x{method:X2})");
+            throw new ProxyException(L.ProxyUnsupportedAuth(method));
 
         // CONNECT request. Send a literal address when host is an IP, else a domain name (proxy resolves).
         var req = new List<byte> { 0x05, 0x01, 0x00 };
@@ -89,7 +89,7 @@ public static class ProxyUpstream
         else
         {
             var name = Encoding.UTF8.GetBytes(host);
-            if (name.Length > 255) throw new ProxyException("host name too long for SOCKS5");
+            if (name.Length > 255) throw new ProxyException(L.ProxyHostTooLong);
             req.Add(0x03);
             req.Add((byte)name.Length);
             req.AddRange(name);
@@ -99,24 +99,11 @@ public static class ProxyUpstream
         await Send(s, req.ToArray(), ct);
 
         var head = await Recv(s, 4, ct);
-        if (head[0] != 0x05) throw new ProxyException("malformed SOCKS5 reply");
-        if (head[1] != 0x00) throw new ProxyException("SOCKS5 proxy refused: " + Socks5Error(head[1]));
-        int skip = head[3] switch { 0x01 => 4, 0x04 => 16, 0x03 => 1 + (await Recv(s, 1, ct))[0], _ => throw new ProxyException("bad SOCKS5 reply address") };
+        if (head[0] != 0x05) throw new ProxyException(L.ProxyMalformedSocks5);
+        if (head[1] != 0x00) throw new ProxyException(L.ProxySocks5Refused(L.Socks5Error(head[1])));
+        int skip = head[3] switch { 0x01 => 4, 0x04 => 16, 0x03 => 1 + (await Recv(s, 1, ct))[0], _ => throw new ProxyException(L.ProxyBadReplyAddress) };
         await Recv(s, skip + 2, ct); // bound address + port, discarded
     }
-
-    private static string Socks5Error(byte b) => b switch
-    {
-        0x01 => "general failure",
-        0x02 => "connection not allowed by ruleset",
-        0x03 => "network unreachable",
-        0x04 => "host unreachable",
-        0x05 => "connection refused",
-        0x06 => "TTL expired",
-        0x07 => "command not supported",
-        0x08 => "address type not supported",
-        _ => $"code 0x{b:X2}",
-    };
 
     // ----- SOCKS4 / SOCKS4a -----
 
@@ -127,7 +114,7 @@ public static class ProxyUpstream
         if (IPAddress.TryParse(host, out var ip))
         {
             if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-                throw new ProxyException("SOCKS4 cannot route an IPv6 address (use SOCKS5)");
+                throw new ProxyException(L.ProxySocks4NoIpv6);
             ipBytes = ip.GetAddressBytes();
         }
         else
@@ -153,10 +140,10 @@ public static class ProxyUpstream
         if (reply[1] != 0x5A)
             throw new ProxyException(reply[1] switch
             {
-                0x5B => "SOCKS4 proxy rejected the request",
-                0x5C => "SOCKS4 proxy could not reach the identd client",
-                0x5D => "SOCKS4 proxy identd auth failed",
-                _ => $"SOCKS4 proxy refused (code 0x{reply[1]:X2})",
+                0x5B => L.ProxySocks4Rejected,
+                0x5C => L.ProxySocks4NoIdentd,
+                0x5D => L.ProxySocks4IdentdFailed,
+                _ => L.ProxySocks4Refused(reply[1]),
             });
     }
 
@@ -177,8 +164,8 @@ public static class ProxyUpstream
         await Send(s, Encoding.ASCII.GetBytes(sb.ToString()), ct);
 
         var status = await ReadHttpStatus(s, ct);
-        if (status.Code == 407) throw new ProxyException("HTTP proxy authentication required/failed (407)");
-        if (status.Code is < 200 or > 299) throw new ProxyException($"HTTP proxy refused: {status.Code} {status.Reason}");
+        if (status.Code == 407) throw new ProxyException(L.ProxyHttpAuth);
+        if (status.Code is < 200 or > 299) throw new ProxyException(L.ProxyHttpRefused(status.Code, status.Reason));
     }
 
     /// <summary>Read an HTTP status line plus headers up to the blank line; return the status.</summary>
@@ -188,7 +175,7 @@ public static class ProxyUpstream
         var firstLine = raw.Split("\r\n", 2)[0];
         var parts = firstLine.Split(' ', 3);
         if (parts.Length < 2 || !parts[0].StartsWith("HTTP/") || !int.TryParse(parts[1], out var code))
-            throw new ProxyException("not an HTTP proxy (bad response)");
+            throw new ProxyException(L.ProxyNotHttp);
         return (code, parts.Length > 2 ? parts[2] : "");
     }
 
@@ -213,11 +200,11 @@ public static class ProxyUpstream
             var status = await ReadHttpStatus(sock, ct);
             sw.Stop();
             if (status.Code is 204 or 200)
-                return new TestResult(true, sw.ElapsedMilliseconds, $"OK — {cfg.Kind} proxy reachable, {host} responded {status.Code} in {sw.ElapsedMilliseconds} ms");
-            return new TestResult(false, sw.ElapsedMilliseconds, $"Reached {host} through the proxy but it answered {status.Code} {status.Reason}");
+                return new TestResult(true, sw.ElapsedMilliseconds, L.ProxyOk(cfg.Kind.ToString(), host, status.Code, sw.ElapsedMilliseconds));
+            return new TestResult(false, sw.ElapsedMilliseconds, L.ProxyBadAnswer(host, status.Code, status.Reason));
         }
         catch (ProxyException ex) { return new TestResult(false, sw.ElapsedMilliseconds, ex.Message); }
-        catch (OperationCanceledException) { return new TestResult(false, sw.ElapsedMilliseconds, "timed out"); }
+        catch (OperationCanceledException) { return new TestResult(false, sw.ElapsedMilliseconds, L.ProxyTimedOut); }
         catch (Exception ex) { return new TestResult(false, sw.ElapsedMilliseconds, ex.Message); }
     }
 
@@ -252,7 +239,7 @@ public static class ProxyUpstream
         while (got < n)
         {
             int r = await s.ReceiveAsync(buf.AsMemory(got), SocketFlags.None, ct);
-            if (r == 0) throw new ProxyException("proxy closed the connection unexpectedly");
+            if (r == 0) throw new ProxyException(L.ProxyClosed);
             got += r;
         }
         return buf;
@@ -265,11 +252,11 @@ public static class ProxyUpstream
         while (sb.Length < max)
         {
             int r = await s.ReceiveAsync(one.AsMemory(), SocketFlags.None, ct);
-            if (r == 0) throw new ProxyException("proxy closed the connection unexpectedly");
+            if (r == 0) throw new ProxyException(L.ProxyClosed);
             sb.Append((char)one[0]);
             if (sb.Length >= marker.Length && EndsWith(sb, marker)) return sb.ToString();
         }
-        throw new ProxyException("proxy response too large / malformed");
+        throw new ProxyException(L.ProxyTooLarge);
     }
 
     private static bool EndsWith(StringBuilder sb, string s)
@@ -526,7 +513,7 @@ public static class ProxyAdapter
     /// </summary>
     public static AdapterChild StartChild(string profileId)
     {
-        if (RuntimeLauncher.LaunchBlocked) throw new InvalidOperationException("Launching is disabled in this mode.");
+        if (RuntimeLauncher.LaunchBlocked) throw new InvalidOperationException(L.LaunchBlocked);
         var exe = Environment.ProcessPath
             ?? Path.Combine(AppContext.BaseDirectory, AppInfo.ExeName);
 
@@ -552,7 +539,7 @@ public static class ProxyAdapter
                 return -1;
             });
             if (!readPort.Wait(TimeSpan.FromSeconds(10)) || readPort.Result <= 0)
-                throw new InvalidOperationException("the proxy adapter did not report a port");
+                throw new InvalidOperationException(L.AdapterNoPort);
             return new AdapterChild(proc, readPort.Result, toChild, fromChild);
         }
         catch

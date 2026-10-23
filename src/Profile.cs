@@ -197,6 +197,12 @@ public sealed class LauncherStore
     public const string ViewTiles = "Tiles";
     public const string ViewList = "List";
 
+    /// <summary>
+    /// The UI language: "auto" (the default: Hebrew when Windows shows Hebrew, else English), "en" or
+    /// "he". Older files without this field follow Windows.
+    /// </summary>
+    public string Language { get; set; } = L.Auto;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -234,11 +240,9 @@ public sealed class LauncherStore
         var exe = ResolveRuntime(out var src);
         return src switch
         {
-            RuntimeSource.Settings => $"{exe}  (from settings)",
-            RuntimeSource.Bundled => $"{exe}  (bundled next to the launcher)",
-            _ => "NOT FOUND" +
-                 (string.IsNullOrWhiteSpace(RuntimeExe) ? "" : $" (settings: {RuntimeExe}, missing)") +
-                 $"; looked for {AppPaths.BundledRuntimeExe}",
+            RuntimeSource.Settings => L.RuntimeFromSettings(exe!),
+            RuntimeSource.Bundled => L.RuntimeBundled(exe!),
+            _ => L.RuntimeMissing(string.IsNullOrWhiteSpace(RuntimeExe) ? "" : RuntimeExe, AppPaths.BundledRuntimeExe),
         };
     }
 
@@ -256,6 +260,7 @@ public sealed class LauncherStore
                     store.RuntimeExe ??= "";
                     store.ViewMode = string.Equals(store.ViewMode, ViewList, StringComparison.OrdinalIgnoreCase)
                         ? ViewList : ViewTiles;
+                    store.Language = L.NormalizeSetting(store.Language);
                     return store;
                 }
             }

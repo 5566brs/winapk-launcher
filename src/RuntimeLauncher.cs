@@ -139,13 +139,13 @@ public static class RuntimeLauncher
     public static string? Validate(string? runtimeExe, Profile p)
     {
         if (string.IsNullOrWhiteSpace(runtimeExe))
-            return "winapk-runtime.exe was not found.\nUse \"Runtime path…\" to locate it.";
+            return L.ValidateNoRuntime;
         if (!File.Exists(runtimeExe))
-            return $"winapk-runtime.exe not found:\n{runtimeExe}";
+            return L.ValidateRuntimeMissing(runtimeExe);
         if (string.IsNullOrWhiteSpace(p.ApkPath) || !File.Exists(p.ApkPath))
-            return $"APK not found:\n{p.ApkPath}";
+            return L.ValidateApkMissing(p.ApkPath);
         if (string.IsNullOrWhiteSpace(p.DataRoot))
-            return "This profile has no data root.";
+            return L.ValidateNoDataRoot;
         return null;
     }
 
@@ -157,7 +157,7 @@ public static class RuntimeLauncher
     /// </summary>
     public static LaunchedProcess Start(string? runtimeExe, Profile p)
     {
-        if (LaunchBlocked) throw new InvalidOperationException("Launching is disabled in this mode (--screenshot).");
+        if (LaunchBlocked) throw new InvalidOperationException(L.LaunchBlocked);
         var err = Validate(runtimeExe, p);
         if (err != null || runtimeExe == null) throw new InvalidOperationException(err ?? "no runtime");
 
@@ -173,9 +173,7 @@ public static class RuntimeLauncher
             try { adapter = ProxyAdapter.StartChild(p.Id); socksPort = adapter.Port; }
             catch (Exception ex)
             {
-                throw new InvalidOperationException(
-                    $"Could not start the network proxy adapter for ‘{p.Name}’.\n{ex.Message}\n\n" +
-                    "The app was NOT launched (it would otherwise run without the configured proxy).");
+                throw new InvalidOperationException(L.AdapterFailed(p.Name, ex.Message));
             }
         }
 
@@ -232,7 +230,7 @@ public static class RuntimeLauncher
             try { log?.Dispose(); } catch { }
             try { if (adapter != null && !adapter.Process.HasExited) adapter.Process.Kill(); } catch { }
             if (ex is InvalidOperationException) throw;
-            throw new InvalidOperationException($"winapk-runtime did not start: {ex.Message}", ex);
+            throw new InvalidOperationException(L.RuntimeDidNotStart(ex.Message), ex);
         }
         finally
         {
@@ -282,7 +280,7 @@ public static class RuntimeLauncher
             var take = all.Count <= lines ? all : all.GetRange(all.Count - lines, lines);
             return string.Join(Environment.NewLine, take);
         }
-        catch (Exception ex) { return $"(could not read log: {ex.Message})"; }
+        catch (Exception ex) { return L.CouldNotReadLog(ex.Message); }
     }
 
     public static string MakeFileSafe(string s)
