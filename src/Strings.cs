@@ -17,8 +17,9 @@ internal sealed record UiLanguage(string Code, string NativeName, bool Rtl);
 /// Console output (<c>--help</c>, <c>--list</c>, <c>--dry-run</c> ...) and the logs stay English:
 /// only the GUI calls <see cref="Apply"/>, so code shared with the console gets English there.
 ///
-/// In a right-to-left language, wrap paths, file names and other Latin text in <see cref="Ltr"/>,
-/// and names the user typed in <see cref="Iso"/>, so numbers and punctuation keep their places.
+/// In a right-to-left language, wrap paths, file names, versions and other Latin text in
+/// <see cref="Ltr"/>, and names the user typed in <see cref="Iso"/>: each becomes one unit, so
+/// hyphens, slashes, dots and parentheses at its ends keep their places.
 /// </summary>
 internal static class L
 {
@@ -70,10 +71,14 @@ internal static class L
 
     // ----- direction -----
 
-    private const char LRE = '\u202A', RLE = '\u202B', PDF = '\u202C';
+    // The isolates (LRI, FSI, PDI) would fit best, but GDI text, which WinForms draws with, shows
+    // them as boxes and does not isolate. An embedding (LRE or RLE … PDF) between two marks of the
+    // surrounding direction (RLM or LRM) does the same: the text inside keeps its direction, and the
+    // punctuation around it follows the sentence.
+    private const char LRE = '\u202A', RLE = '\u202B', PDF = '\u202C', LRM = '\u200E', RLM = '\u200F';
 
-    /// <summary>Left-to-right text (a path, a file name, a version, an env var) inside right-to-left text.</summary>
-    public static string Ltr(string? s) => !Rtl || string.IsNullOrEmpty(s) ? s ?? "" : LRE + s + PDF;
+    /// <summary>Left-to-right text (a path, a file name, a version, an env var, "-Xmx2g") as one unit inside right-to-left text.</summary>
+    public static string Ltr(string? s) => !Rtl || string.IsNullOrEmpty(s) ? s ?? "" : RLM.ToString() + LRE + s + PDF + RLM;
 
     /// <summary>True when the first letter of <paramref name="s"/> is Hebrew or Arabic.</summary>
     public static bool StartsRtl(string? s)
@@ -87,15 +92,17 @@ internal static class L
     }
 
     /// <summary>
-    /// A name the user typed, on one line, in its own direction (that of its first letter) inside
-    /// the sentence: "PF Notes (via SOCKS5)" stays left to right in Hebrew text, a Hebrew name stays
-    /// right to left in English text. For text that wraps, set the paragraph direction instead.
+    /// A name the user typed, on one line, as one unit in its own direction (that of its first
+    /// letter, like FSI) inside the sentence: "PF Notes (דרך SOCKS5)" stays whole in Hebrew text, a
+    /// Hebrew name stays whole in English text. For text that wraps, set the paragraph direction instead.
     /// </summary>
     public static string Iso(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";
-        if (StartsRtl(s)) return RLE + s + PDF;
-        return Rtl ? LRE + s + PDF : s;
+        bool rtlName = StartsRtl(s);
+        if (!Rtl && !rtlName) return s;
+        var mark = Rtl ? RLM : LRM;
+        return mark.ToString() + (rtlName ? RLE : LRE) + s + PDF + mark;
     }
 
     private static bool IsRtlLetter(char c) => c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF';
