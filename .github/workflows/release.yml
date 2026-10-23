@@ -49,6 +49,23 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           if ($env:TAG -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "tag must look like v0.1.0, got '$env:TAG'" }
+          # The release notes start with this version's CHANGELOG.md section ("## [0.1.1] - <date>").
+          $version = $env:TAG.Substring(1)
+          $lines = [IO.File]::ReadAllLines((Join-Path $PWD 'CHANGELOG.md'))
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match ('^## \[v?' + [regex]::Escape($version) + '\](\s|$)')) { $start = $i; break }
+          }
+          if ($start -lt 0) { throw "CHANGELOG.md has no section for $version (a '## [$version] - <date>' heading)" }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^## ' -or $lines[$i] -match '^\[[^\]]+\]: ') { $end = $i; break }
+          }
+          $body = if ($end -gt $start + 1) { ($lines[($start + 1)..($end - 1)] -join "`n").Trim() } else { '' }
+          if (-not $body) { throw "the CHANGELOG.md section for $version is empty" }
+          if ($lines[$start] -match 'Unreleased') { Write-Host "::warning::CHANGELOG.md still says Unreleased for ${version}: $($lines[$start])" }
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'changelog-section.md'), "$body`n", [Text.UTF8Encoding]::new($false))
+          Write-Host "release notes start with: $($lines[$start])"
           gh release view $env:TAG *> $null
           if ($LASTEXITCODE -eq 0) { throw "release $env:TAG already exists" }
           "VERSION=$($env:TAG.Substring(1))" >> $env:GITHUB_ENV
@@ -196,8 +213,11 @@ jobs:
         run: |
           $setup = "WinApkLauncher-Setup-$env:VERSION.exe"
           $zip = "WinApkLauncher-$env:VERSION-portable.zip"
-          $sums = foreach ($f in $setup, $zip) { "{0}  {1}" -f (Get-FileHash "dist\$f" -Algorithm SHA256).Hash.ToLower(), $f }
-          $sums | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          # sha256sum's own format: <64 hex><two spaces><file name>, LF line endings, no BOM, so that
+          # `sha256sum -c SHA256SUMS.txt` works on Linux (Set-Content wrote CRLF). Checked below.
+          $sums = foreach ($f in $setup, $zip) { "{0}  {1}" -f (Get-FileHash "dist\$f" -Algorithm SHA256).Hash.ToLowerInvariant(), $f }
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist\SHA256SUMS.txt'), (($sums -join "`n") + "`n"), $utf8)
           $m = Select-String -Path winapk\Win.apk\jre\release -Pattern '^JAVA_RUNTIME_VERSION="(.*)"'
           $jre = if ($m) { $m.Matches[0].Groups[1].Value } else { '21' }
           $notes = @'
@@ -235,8 +255,30 @@ jobs:
             '{JRE}' = $jre; '{REPO}' = $env:GITHUB_REPOSITORY; '{SHA}' = $env:GITHUB_SHA
           }
           foreach ($k in $values.Keys) { $notes = $notes.Replace($k, [string]$values[$k]) }
-          $notes | Set-Content dist\RELEASE_NOTES.md -Encoding utf8
+          # This version's CHANGELOG.md section first (extracted by "Check the inputs"), then the rest.
+          $changes = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'changelog-section.md')).Trim()
+          $notes = "## What's new in $env:TAG`n`n$changes`n`n" + $notes.Replace("`r`n", "`n").Trim() + "`n"
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist\RELEASE_NOTES.md'), $notes, $utf8)
           Get-Content dist\RELEASE_NOTES.md
+
+      - name: Verify the checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          # Exactly what sha256sum writes: <64 hex><two spaces><file name>, one line per file, LF, no BOM.
+          # (Git Bash's grep drops CRs from what it reads, so count them byte-wise.)
+          if [ "$(tr -cd '\r' < SHA256SUMS.txt | wc -c)" -ne 0 ]; then echo "SHA256SUMS.txt has CR characters"; exit 1; fi
+          if [ "$(head -c 3 SHA256SUMS.txt | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then echo "SHA256SUMS.txt starts with a BOM"; exit 1; fi
+          if LC_ALL=C grep -vqE '^[0-9a-f]{64}  [^ */\\][^/\\]*$' SHA256SUMS.txt; then echo "SHA256SUMS.txt has a malformed line"; cat -A SHA256SUMS.txt; exit 1; fi
+          if [ -n "$(tail -c 1 SHA256SUMS.txt)" ]; then echo "SHA256SUMS.txt does not end with a newline"; exit 1; fi
+          [ "$(wc -l < SHA256SUMS.txt)" -eq 2 ] || { echo "SHA256SUMS.txt must list the installer and the zip"; exit 1; }
+          sha256sum -c SHA256SUMS.txt
+          # The hashes printed in the release notes are the same lines, and check too.
+          LC_ALL=C grep -E '^[0-9a-f]{64}  ' RELEASE_NOTES.md > notes-sums.txt
+          cmp notes-sums.txt SHA256SUMS.txt
+          sha256sum -c notes-sums.txt
+          rm notes-sums.txt
 
       - name: Publish the release
         shell: pwsh
