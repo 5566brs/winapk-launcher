@@ -12,6 +12,8 @@ need to install anything else.
 Which apps run, and how well, depends on Win.apk. See the
 [Win.apk README](https://github.com/israel2176/win.apk) for what works.
 
+For what changed in each release, see [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 - **Tiles and list views.** App icons come from the packages, including adaptive icons and
@@ -25,9 +27,12 @@ Which apps run, and how well, depends on Win.apk. See the
   roots. They run as independent apps.
 - **Per-app proxy.** Route an app's network traffic through a SOCKS5, SOCKS4/4a or HTTP CONNECT
   proxy, with an optional username and password. **Test** checks the proxy from the Edit dialog.
+- **Startup progress.** While an app starts, its tile shows **Starting…** and the status bar
+  shows the current step. Launching an app that is already running brings its window to the
+  front instead of starting a second copy. See [First launch](#first-launch).
 - **Logs and shortcuts.** Each launch writes a log. The toolbar opens the **Run log**, the
-  **Proxy log** and the app's **Data folder**. The right-click menu has
-  **Create desktop shortcut**, which launches that app directly.
+  **Proxy log** and the app's **Data folder**, and its **…** menu has **Open logs folder**. The
+  right-click menu has **Create desktop shortcut**, which launches that app directly.
 - **Windows look.** Dark and light themes follow your Windows settings and accent color.
 - **Command line.** `--list`, `--launch`, `--dry-run`, `--test-proxy` and more; see
   [Command line](#command-line).
@@ -82,6 +87,23 @@ To uninstall, open **Apps** in Windows **Settings**, and uninstall **WinApk Laun
 removes the program files and keeps your settings and your apps' data; see
 [Where your data lives](#where-your-data-lives).
 
+## First launch
+
+The first time you launch an app, Win.apk installs it and converts its code before it opens the
+app's window. This takes a few seconds for a small app and several minutes for a large app, such
+as WhatsApp. Later launches skip these steps.
+
+While an app starts, its tile shows **Starting…** with a small spinner, and the status bar shows
+the current step and the time so far: **Installing the app…**, **Converting the app's code (first
+launch only)…** or **Starting…**. If you launch the app again in the meantime, the launcher
+doesn't start a second copy. It tells you that the app is still starting, and once the app's
+window is open, it brings that window to the front.
+
+![A tile marked "Starting…" while the status bar shows "Converting the app's code (first launch only)…"](docs/screenshot-starting.png)
+
+A profile with **Allow multiple instances** can start another copy, but only after the first copy
+has opened its window.
+
 ## Portable mode
 
 The release also has a portable zip, `WinApkLauncher-<version>-portable.zip`. To use it, unzip it
@@ -105,7 +127,13 @@ The launcher stores its files in these places:
 | Win.apk runtime | `runtime\` in the install folder | `runtime\` |
 
 You can change a profile's data root in its Edit dialog. Each data root also holds that app's
-runtime logs, in `logs\`.
+runtime logs, in `logs\`, once the runtime has written one.
+
+**Where are the logs?** Each launch writes a run log named
+`%LOCALAPPDATA%\WinApk Launcher\logs\<profile name>-<date>-<time>.log`. In portable mode, it's in
+the `logs\` folder next to `WinApkLauncher.exe`. Explorer hides the `AppData` folder, so to get
+there, select **…** > **Open logs folder** in the toolbar. When an app crashes, its message also
+has an **Open logs folder** button, which opens the folder with that log selected.
 
 Uninstalling keeps the settings and the apps' data. To remove them as well, delete
 `%APPDATA%\WinApk Launcher` and `%LOCALAPPDATA%\WinApk Launcher`. Deleting a profile in the
@@ -132,10 +160,12 @@ When you launch an app, the launcher looks for `winapk-runtime.exe` in this orde
 | (none) | Opens the launcher. |
 | `<package>` or `--add <package>` | Opens the launcher with the **Add profile** dialog filled in for that file. If the launcher is already open, that window shows the dialog. |
 | `--list` | Lists the profiles, the settings file and the runtime in use. |
-| `--launch <name or id>` | Launches a profile, with its proxy adapter, and returns at once. The app keeps running and writes its output to the run log. Desktop shortcuts use this. |
+| `--launch <name or id>` | Launches a profile, with its proxy adapter, and returns at once. The app keeps running and writes its output to the run log. Desktop shortcuts use this. If the app is already running, it brings the app's window to the front instead. If the app is still starting, it says so. In both cases, it starts nothing and exits with code 3. |
 | `--launch <name or id> -s <seconds>` | Launches a profile, watches it for that many seconds, then closes it (a smoke test). |
 | `--dry-run <name or id>` | Prints the runtime, arguments and environment variables a launch would use. Starts nothing. |
 | `--test-proxy <name or id>` | Runs the Edit dialog's proxy test for a profile. |
+| `--status <name or id>` | Prints whether the profile's app is running or still starting, and its runtime processes. Starts nothing. |
+| `--self-test` | Runs the launcher's built-in checks. The build workflow runs it on every push. |
 | `--icon <package> [out.png]` | Traces the icon extraction for a package. |
 | `--theme light` or `--theme dark` | Opens the launcher in that theme. |
 | `--screenshot <folder>` | Opens the launcher, saves captures of its views and the Edit dialog to the folder, and exits. It never launches an app. |
