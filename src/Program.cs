@@ -70,14 +70,38 @@ internal static class Program
 internal static class Cli
 {
     [DllImport("kernel32.dll")] private static extern bool AttachConsole(int pid);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int which);
+    [DllImport("kernel32.dll")] private static extern bool SetStdHandle(int which, IntPtr handle);
+    [DllImport("kernel32.dll")] private static extern uint GetFileType(IntPtr handle);
     private const int ATTACH_PARENT_PROCESS = -1;
+    private const int STD_OUTPUT_HANDLE = -11, STD_ERROR_HANDLE = -12;
+    private const uint FILE_TYPE_DISK = 1, FILE_TYPE_PIPE = 3;
 
     /// <summary>False when started without a console, for example by a desktop shortcut.</summary>
     private static bool _hasConsole;
 
+    /// <summary>True when stdout goes to a file or a pipe.</summary>
+    private static bool _redirected;
+
     public static int Run(string[] args)
     {
+        // cmd.exe hands "> file" and "| x" to a GUI program by handle inheritance, not with
+        // STARTF_USESTDHANDLES, and AttachConsole then swaps such handles for the console's, so the
+        // output never reached the file. Keep a redirected stdout/stderr as it is.
+        var outFile = Redirected(STD_OUTPUT_HANDLE);
+        var errFile = Redirected(STD_ERROR_HANDLE);
         _hasConsole = AttachConsole(ATTACH_PARENT_PROCESS);
+        if (outFile != IntPtr.Zero)
+        {
+            SetStdHandle(STD_OUTPUT_HANDLE, outFile);
+            Console.SetOut(Writer(Console.OpenStandardOutput()));
+        }
+        if (errFile != IntPtr.Zero)
+        {
+            SetStdHandle(STD_ERROR_HANDLE, errFile);
+            Console.SetError(Writer(Console.OpenStandardError()));
+        }
+        _redirected = outFile != IntPtr.Zero;
         var store = LauncherStore.Load();
 
         switch (args[0].ToLowerInvariant())
@@ -149,6 +173,22 @@ internal static class Cli
                 Console.WriteLine($"runtime: {store.DescribeRuntime()}");
                 return 0;
         }
+    }
+
+    /// <summary>The std handle if it is a file or a pipe, else zero.</summary>
+    private static IntPtr Redirected(int which)
+    {
+        var h = GetStdHandle(which);
+        if (h == IntPtr.Zero || h == new IntPtr(-1)) return IntPtr.Zero;
+        var type = GetFileType(h);
+        return type is FILE_TYPE_DISK or FILE_TYPE_PIPE ? h : IntPtr.Zero;
+    }
+
+    private static TextWriter Writer(Stream s)
+    {
+        var enc = Console.OutputEncoding;
+        if (enc.CodePage == 65001) enc = new System.Text.UTF8Encoding(false);
+        return new StreamWriter(s, enc) { AutoFlush = true };
     }
 
     private static int Icon(string apk, string? outPng)
