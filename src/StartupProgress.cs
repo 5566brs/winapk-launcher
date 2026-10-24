@@ -46,6 +46,11 @@ public sealed class StartupWatch
 
     private const int MaxReadPerPoll = 1 << 20;
 
+    // A capped log (see CappedLog) is rewritten in place at the same size: its last bytes tell
+    // whether it changed.
+    private const int TailWindow = 16 * 1024;
+    private byte[]? _lastWindow;
+
     /// <summary>
     /// How long both the log and the CPU must be idle before the startup window says the app may be
     /// stuck: 3 minutes. WINAPKLAUNCHER_STALL_SECONDS overrides it, for tests.
@@ -165,8 +170,12 @@ public sealed class StartupWatch
         {
             using var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.SequentialScan);
-            if (fs.Length < _offset) { _offset = 0; _partial.Clear(); } // replaced: start over
-            if (fs.Length == _offset) return false;
+            if (fs.Length <= _offset)
+            {
+                ReadRewrittenTail(fs);
+                return before != (Phase, _converted);
+            }
+            _lastWindow = null;
             LastLogGrowthUtc = DateTime.UtcNow;
             fs.Seek(_offset, SeekOrigin.Begin);
             var bytes = new byte[(int)Math.Min(MaxReadPerPoll, fs.Length - _offset)];
@@ -183,6 +192,32 @@ public sealed class StartupWatch
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
         return before != (Phase, _converted);
+    }
+
+    /// <summary>
+    /// The file did not get longer: unchanged, or rewritten in place by the log keeper once it reached
+    /// its limit. Compares its last bytes with the last look; when they differ, the log moved on, and
+    /// the whole lines among them are applied.
+    /// </summary>
+    private void ReadRewrittenTail(FileStream fs)
+    {
+        long len = fs.Length;
+        int n = (int)Math.Min(len, TailWindow);
+        var window = new byte[n];
+        fs.Seek(len - n, SeekOrigin.Begin);
+        fs.ReadExactly(window);
+        if (_lastWindow == null && len == _offset) { _lastWindow = window; return; } // the baseline after reading it all
+        if (_lastWindow != null && window.AsSpan().SequenceEqual(_lastWindow)) return;
+        _lastWindow = window;
+        _offset = len;
+        _partial.Clear();
+        _decoder.Reset();
+        LastLogGrowthUtc = DateTime.UtcNow;
+        var text = Encoding.UTF8.GetString(window);
+        int start = n < len ? text.IndexOf('\n') + 1 : 0; // the first line may be cut
+        int end = text.LastIndexOf('\n');
+        if (start <= 0 && n < len || end < start) return;
+        foreach (var line in text[start..end].Split('\n')) Feed(line.TrimEnd('\r'));
     }
 
     /// <summary>Applies one complete log line.</summary>

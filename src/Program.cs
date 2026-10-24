@@ -11,6 +11,10 @@ internal static class Program
         if (args.Length >= 2 && args[0].Equals("--proxy-adapter", StringComparison.OrdinalIgnoreCase))
             return ProxyAdapter.Run(args[1]);
 
+        // Hidden child process: the run log's size keeper (see LogKeeper).
+        if (args.Length >= 3 && args[0].Equals("--log-keeper", StringComparison.OrdinalIgnoreCase))
+            return LogKeeper.Run(args[1], args[2]);
+
         // Hidden child process: the startup window of a --launch (see SplashProcess).
         if (args.Length >= 3 && args[0].Equals("--splash", StringComparison.OrdinalIgnoreCase))
             return SplashProcess.Run(args);
@@ -268,8 +272,10 @@ internal static class Cli
         Console.WriteLine($"command: {RuntimeLauncher.BuildCommandLine(runtime, p)}");
         if (p.HasProxy) Console.WriteLine($"proxy:   {p.ProxyLabel}{(p.ResolveProxy()!.HasAuth ? " (auth)" : "")} via a local SOCKS5 adapter");
 
-        var lp = RuntimeLauncher.Start(runtime, p);
+        var lp = RuntimeLauncher.Start(runtime, p, store.LogLimits);
         Console.WriteLine($"started pid {lp.Process.Id}");
+        Console.WriteLine(lp.LogKeeper != null ? $"log keeper: pid {lp.LogKeeper.Id}, log kept under {store.MaxRunLogMB} MB"
+                                               : "log keeper: did not start; the log is not capped");
         if (lp.ProxyAdapter != null) Console.WriteLine($"proxy adapter: pid {lp.ProxyAdapter.Id} on 127.0.0.1:{lp.ProxyPort}");
         Console.WriteLine("env:");
         foreach (var (k, v) in lp.Env) Console.WriteLine($"  {k}={v}");
@@ -404,6 +410,7 @@ internal static class Cli
         var failures = RuntimeInstance.SelfTest();
         failures.AddRange(StartupWatch.SelfTest());
         failures.AddRange(L.SelfTest());
+        failures.AddRange(CappedLog.SelfTest());
         foreach (var f in failures) Console.WriteLine("FAIL: " + f);
         Console.WriteLine(failures.Count == 0 ? "self-test: OK" : $"self-test: {failures.Count} failure(s)");
         return failures.Count == 0 ? 0 : 1;

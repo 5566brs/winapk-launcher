@@ -174,6 +174,19 @@ internal static class Dpapi
     }
 }
 
+/// <summary>How big run logs may get and how many are kept (profiles.json: MaxRunLogMB, KeepRunLogs, MaxLogsFolderMB).</summary>
+public sealed record LogLimits(int MaxRunLogMB, int KeepRunLogs, int MaxLogsFolderMB)
+{
+    public static LogLimits Default { get; } = new(1, 10, 50);
+    public long MaxRunLogBytes => MaxRunLogMB * 1048576L;
+    public long MaxLogsFolderBytes => MaxLogsFolderMB * 1048576L;
+
+    // The ranges the settings are kept in.
+    public const int MaxRunLogMBMin = 1, MaxRunLogMBMax = 100;
+    public const int KeepRunLogsMin = 1, KeepRunLogsMax = 1000;
+    public const int MaxLogsFolderMBMin = 5, MaxLogsFolderMBMax = 100_000;
+}
+
 /// <summary>Where <see cref="LauncherStore.ResolveRuntime"/> found winapk-runtime.exe.</summary>
 public enum RuntimeSource { None, Settings, Bundled }
 
@@ -202,6 +215,18 @@ public sealed class LauncherStore
     /// "he". Older files without this field follow Windows.
     /// </summary>
     public string Language { get; set; } = L.Auto;
+
+    /// <summary>The largest a run log gets, in MB (1 by default): its start and its newest part are kept.</summary>
+    public int MaxRunLogMB { get; set; } = LogLimits.Default.MaxRunLogMB;
+
+    /// <summary>How many run logs are kept per profile (10 by default); older ones go when a launch starts.</summary>
+    public int KeepRunLogs { get; set; } = LogLimits.Default.KeepRunLogs;
+
+    /// <summary>The largest the logs folder gets, in MB (50 by default); the oldest logs go first.</summary>
+    public int MaxLogsFolderMB { get; set; } = LogLimits.Default.MaxLogsFolderMB;
+
+    [JsonIgnore]
+    public LogLimits LogLimits => new(MaxRunLogMB, KeepRunLogs, MaxLogsFolderMB);
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -261,6 +286,9 @@ public sealed class LauncherStore
                     store.ViewMode = string.Equals(store.ViewMode, ViewList, StringComparison.OrdinalIgnoreCase)
                         ? ViewList : ViewTiles;
                     store.Language = L.NormalizeSetting(store.Language);
+                    store.MaxRunLogMB = Math.Clamp(store.MaxRunLogMB, LogLimits.MaxRunLogMBMin, LogLimits.MaxRunLogMBMax);
+                    store.KeepRunLogs = Math.Clamp(store.KeepRunLogs, LogLimits.KeepRunLogsMin, LogLimits.KeepRunLogsMax);
+                    store.MaxLogsFolderMB = Math.Clamp(store.MaxLogsFolderMB, LogLimits.MaxLogsFolderMBMin, LogLimits.MaxLogsFolderMBMax);
                     return store;
                 }
             }

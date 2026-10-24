@@ -786,7 +786,7 @@ public sealed class MainForm : Form
         if (HandleAlreadyRunning(p, runtime!)) return;
 
         LaunchedProcess lp;
-        try { lp = RuntimeLauncher.Start(runtime, p); }
+        try { lp = RuntimeLauncher.Start(runtime, p, _store.LogLimits); }
         catch (Exception ex)
         {
             Msg.Show(this, ex.Message, L.LaunchFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);

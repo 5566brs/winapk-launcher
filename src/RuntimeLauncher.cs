@@ -18,8 +18,12 @@ public sealed class LaunchedProcess
     public Process? ProxyAdapter { get; internal set; }
     public int ProxyPort { get; internal set; }
 
-    // The launcher's own append handle to the run log, kept to add the exit line. The runtime has
-    // its own handle to the same file, so the log does not depend on this one (or on the launcher).
+    /// <summary>The --log-keeper process that caps the run log; null when it could not start (a plain log file).</summary>
+    public Process? LogKeeper { get; internal set; }
+
+    // The launcher's own handle to the run log (the log keeper's pipe, or the file itself), kept to
+    // add the exit line. The runtime has its own handle, so the log does not depend on this one (or
+    // on the launcher).
     private SafeFileHandle? _log;
     private readonly object _gate = new();
     private bool _exited;
@@ -74,8 +78,9 @@ public sealed class LaunchedProcess
 /// --apk/--data command line plus the env vars set for that child process only
 /// (WINAPK_PHONE_SIZE, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL,
 /// WINAPK_DENSITY, WINAPK_ALLOW_SECOND_INSTANCE, WINAPK_PROXY). The runtime's stdout and
-/// stderr go straight to a per-run log file in <see cref="AppPaths.LogsDir"/>, through a handle
-/// the runtime owns, so the log keeps growing after the launcher exits.
+/// stderr go to a per-run log file in <see cref="AppPaths.LogsDir"/> through a hidden
+/// <see cref="LogKeeper"/> process that caps its size (or, if that cannot start, straight to the
+/// file), so the log keeps growing after the launcher exits.
 /// </summary>
 public static class RuntimeLauncher
 {
@@ -150,13 +155,15 @@ public static class RuntimeLauncher
     }
 
     /// <summary>
-    /// Starts the runtime for <paramref name="p"/>. Creates the data root and the run log, writes
-    /// the launcher's header lines, then starts the runtime with the log file as its stdout and
-    /// stderr (one append handle) and NUL as its stdin, inheriting nothing else. The env is set on
-    /// the child only. Throws on a validation failure or if the process cannot start.
+    /// Starts the runtime for <paramref name="p"/>. Creates the data root and the run log, starts the
+    /// log keeper, writes the launcher's header lines, then starts the runtime with the keeper's pipe
+    /// as its stdout and stderr (or the log file itself, if the keeper could not start) and NUL as its
+    /// stdin, inheriting nothing else. The env is set on the child only. Throws on a validation
+    /// failure or if the process cannot start.
     /// </summary>
-    public static LaunchedProcess Start(string? runtimeExe, Profile p)
+    public static LaunchedProcess Start(string? runtimeExe, Profile p, LogLimits? limits = null)
     {
+        limits ??= LogLimits.Default;
         if (LaunchBlocked) throw new InvalidOperationException(L.LaunchBlocked);
         var err = Validate(runtimeExe, p);
         if (err != null || runtimeExe == null) throw new InvalidOperationException(err ?? "no runtime");
@@ -180,9 +187,12 @@ public static class RuntimeLauncher
         var env = BuildEnv(p, socksPort);
         var commandLine = BuildCommandLine(runtimeExe, p);
         SafeFileHandle? log = null;
+        Process? keeper = null;
         try
         {
-            log = NativeProcess.OpenAppend(logPath);
+            // The log keeper caps the log; without it, the runtime writes the file directly.
+            try { (keeper, log) = LogKeeper.StartChild(logPath, limits.MaxRunLogBytes); }
+            catch { keeper = null; log = NativeProcess.OpenAppend(logPath); }
             var header = new StringBuilder();
             void H(string line) => header.Append("# ").Append(line).Append(Environment.NewLine);
             H($"{AppInfo.ProductName} {AppInfo.Version}");
@@ -192,6 +202,8 @@ public static class RuntimeLauncher
             H("env:");
             foreach (var (k, v) in env) H($"  {k}={v}");
             if (adapter != null) H($"proxy: {p.ProxyLabel} via local adapter 127.0.0.1:{socksPort} (pid {adapter.Process.Id})");
+            H(keeper != null ? $"log: kept under {limits.MaxRunLogMB} MB by the log keeper (pid {keeper.Id})"
+                             : "log: not capped (the log keeper did not start)");
             // Only once the runtime has made it: on a first launch it does not exist yet.
             if (Directory.Exists(RuntimeLogDir(p))) H($"runtime data/logs: {RuntimeLogDir(p)}");
             H("----------------------------------------------------------------");
@@ -205,6 +217,7 @@ public static class RuntimeLauncher
                 Profile = p,
                 ProxyAdapter = adapter?.Process,
                 ProxyPort = socksPort,
+                LogKeeper = keeper,
             };
             launched.AttachLog(log);
 
@@ -243,8 +256,12 @@ public static class RuntimeLauncher
     {
         var stem = Path.Combine(LogsDir, $"{MakeFileSafe(p.Name)}-{DateTime.Now:yyyyMMdd-HHmmss}");
         var path = stem + ".log";
-        for (int n = 2; File.Exists(path); n++) path = $"{stem}-{n}.log";
-        return path;
+        for (int n = 2; ; n++)
+        {
+            // Created at once, so a second launch in the same second picks the next name.
+            try { using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { } return path; }
+            catch (IOException) when (File.Exists(path)) { path = $"{stem}-{n}.log"; }
+        }
     }
 
     /// <summary>The newest run log of a profile in <see cref="LogsDir"/> (by name), or null.</summary>
