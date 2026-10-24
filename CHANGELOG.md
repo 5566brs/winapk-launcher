@@ -5,7 +5,23 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 2026-10-24
+
+### Fixed
+
+- A fresh install of WhatsApp no longer stays on **Starting…** forever. The bundled runtime's code
+  converter used to replace one oversize, data-only static initializer in WhatsApp with a method
+  that throws, and the app then failed in `Application.onCreate` with no window. The converter
+  now computes that initializer's data at conversion time and keeps the class working. The fix
+  is general, not specific to WhatsApp, and is proposed upstream as kksimp/dex2jvm#1. The runtime
+  is now built from `5566brs/win.apk` `bundle/v0.1.2`.
+
+### Known issues
+
+- On WhatsApp's very first launch, it may show its own "corrupt installation" screen. It
+  unpacks its native libraries during that first run, and the runtime picks them up only on the
+  next start. Close WhatsApp and launch it again.
+
 
 ### Added
 
