@@ -26,11 +26,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   startup window says that the app might be stuck and offers **Open log** and **Stop**. **Stop**
   asks first. When only the log is quiet and the CPU is busy, as in a long code conversion, it
   says **Still working (CPU busy)…**.
+- Run logs have a size limit, 1 MB by default. A hidden log keeper process writes the runtime's
+  output: the first 256 KB of the run, then a line "[… N MB of log omitted …]", then the newest
+  output. The log stays readable while the app runs, and the keeper keeps it going after the
+  launcher exits. If the keeper can't start, the runtime writes the log directly, as before.
+- Old run logs are deleted when an app is launched: each app keeps its newest 10 run logs, and
+  the logs folder stays under 50 MB, oldest logs first. The log of an app that is running is
+  never deleted.
+- The proxy adapter's `proxy.log` has the same size limit. When it's full, it becomes
+  `proxy.log.1`, replacing the older one, and a new `proxy.log` starts.
+- A **Logs…** dialog in the toolbar's **…** menu sets the limits (`MaxRunLogMB`, `KeepRunLogs`
+  and `MaxLogsFolderMB` in `profiles.json`), shows the logs folder's size, and has a **Delete
+  old logs** button, which keeps only the newest run log of each app.
 
 ### Changed
 
 - The delete confirmation and the "runtime not found" question are now launcher dialogs, so
   their buttons follow the launcher's language.
+- Quieter logs. Apps no longer log a line for every class they load (`MACAPK_QUIET_CLASSLOAD=1`),
+  which was most of a run log, unless **Detailed class-loading log** is selected in the Edit
+  dialog. Existing profiles keep their log level, and a new profile starts at log level 4 (Info)
+  instead of all.
 
 ## [0.1.1] - 2026-10-23
 

@@ -186,6 +186,17 @@ the `logs\` folder next to `WinApkLauncher.exe`. Explorer hides the `AppData` fo
 there, select **…** > **Open logs folder** in the toolbar. When an app crashes, its message also
 has an **Open logs folder** button, which opens the folder with that log selected.
 
+**How big do the logs get?** Each run log stays under 1 MB: when an app writes more, the log
+keeps the first 256 KB of the run and the newest output, with a line that says how much was left
+out. Each app keeps its newest 10 run logs, and the logs folder stays under 50 MB; older logs are
+deleted when an app is launched, but never the log of an app that is running. To change these
+limits, see the folder's size or delete old logs now, select **…** > **Logs…**. An app with a
+proxy also writes `proxy.log` in its data root's `logs\` folder, with the same size limit; the
+previous one is kept as `proxy.log.1`.
+
+By default, apps don't log the classes they load, which is most of a log. To log them, select
+**Detailed class-loading log** in the app's Edit dialog.
+
 Uninstalling keeps the settings and the apps' data. To remove them as well, delete
 `%APPDATA%\WinApk Launcher` and `%LOCALAPPDATA%\WinApk Launcher`. Deleting a profile in the
 launcher keeps its data root on disk.
