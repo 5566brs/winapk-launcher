@@ -289,7 +289,7 @@ public static class ProxyAdapter
 
         var logPath = Path.Combine(RuntimeLauncher.RuntimeLogDir(profile), "proxy.log");
         try { Directory.CreateDirectory(Path.GetDirectoryName(logPath)!); } catch { }
-        using var logger = new ConnLog(logPath);
+        using var logger = new ConnLog(logPath, store.LogLimits.MaxRunLogBytes);
 
         TcpListener listener;
         try
@@ -584,29 +584,84 @@ public sealed class AdapterChild : IDisposable
     }
 }
 
-/// <summary>Appends one line per connection to proxy.log, time-stamped. Never throws.</summary>
+/// <summary>
+/// Appends one line per connection to proxy.log, time-stamped. Past <c>maxBytes</c> (MaxRunLogMB) the
+/// file becomes proxy.log.1, replacing the older one, and a new proxy.log starts. Never throws.
+/// </summary>
 internal sealed class ConnLog : IDisposable
 {
-    private readonly StreamWriter? _w;
+    private readonly string _path;
+    private readonly long _max;
+    private StreamWriter? _w;
+    private long _size;
     private readonly object _gate = new();
 
-    public ConnLog(string path)
+    public ConnLog(string path, long maxBytes)
     {
+        _path = path;
+        _max = Math.Max(4096, maxBytes);
         try
         {
-            _w = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
-            _w.WriteLine($"# ---- proxy adapter started {DateTime.Now:O} (pid {Environment.ProcessId}) ----");
+            if (File.Exists(path) && new FileInfo(path).Length >= _max) Rotate();
+            Open();
+            Write($"# ---- proxy adapter started {DateTime.Now:O} (pid {Environment.ProcessId}) ----");
         }
         catch { _w = null; }
+    }
+
+    private void Open()
+    {
+        // Shared for delete too, so a second adapter on the same file can still rotate it.
+        var fs = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        _size = fs.Length;
+        _w = new StreamWriter(fs) { AutoFlush = true };
+    }
+
+    private void Rotate()
+    {
+        _w?.Dispose();
+        _w = null;
+        File.Move(_path, _path + ".1", overwrite: true);
+    }
+
+    private void Write(string text)
+    {
+        if (_w == null) return;
+        _w.WriteLine(text);
+        _size += System.Text.Encoding.UTF8.GetByteCount(text) + 2;
+        if (_size < _max) return;
+        Rotate();
+        Open();
     }
 
     public void Line(string target, string note)
     {
         lock (_gate)
         {
-            try { _w?.WriteLine($"{DateTime.Now:HH:mm:ss}  {target,-28}  {note}"); } catch { }
+            try { Write($"{DateTime.Now:HH:mm:ss}  {target,-28}  {note}"); } catch { }
         }
     }
 
-    public void Dispose() { try { _w?.Dispose(); } catch { } }
+    public void Dispose() { lock (_gate) { try { _w?.Dispose(); } catch { } } }
+
+    /// <summary>Writes past a 16 KB limit in a temporary folder: proxy.log stays small and proxy.log.1 holds the rest.</summary>
+    public static List<string> SelfTest()
+    {
+        var failures = new List<string>();
+        var dir = Path.Combine(Path.GetTempPath(), $"winapklauncher-selftest-proxy-{Environment.ProcessId}");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "proxy.log");
+            using (var log = new ConnLog(path, 16 * 1024))
+                for (int i = 0; i < 1000; i++) log.Line($"host{i}.example:443", "OK");
+            long size = new FileInfo(path).Length, old = File.Exists(path + ".1") ? new FileInfo(path + ".1").Length : -1;
+            if (size > 16 * 1024) failures.Add($"proxy log: {size} bytes, over the limit");
+            if (old < 0 || old > 16 * 1024 + 200) failures.Add($"proxy log: proxy.log.1 is {old} bytes");
+            if (!File.ReadAllText(path).Contains("host999.example:443")) failures.Add("proxy log: the newest line is missing");
+        }
+        catch (Exception ex) { failures.Add("proxy log: " + ex.Message); }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+        return failures;
+    }
 }
