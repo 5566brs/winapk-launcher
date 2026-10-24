@@ -170,6 +170,7 @@ public static class RuntimeLauncher
 
         Directory.CreateDirectory(p.DataRoot);
         Directory.CreateDirectory(LogsDir);
+        LogRetention.BeforeLaunch(p, limits); // the newest KeepRunLogs of this app stay, counting the new one
         var logPath = NewLogPath(p);
 
         // A proxy profile gets its local adapter first, so we can point the app at its port.

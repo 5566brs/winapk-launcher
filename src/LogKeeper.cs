@@ -237,3 +237,142 @@ internal static class LogKeeper
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CreatePipe(out SafeFileHandle read, out SafeFileHandle write, IntPtr attributes, int size);
 }
+
+/// <summary>
+/// Keeps the logs folder small: when a launch starts, the newest <see cref="LogLimits.KeepRunLogs"/>
+/// run logs of that profile stay (counting the new one) and the whole folder stays under
+/// <see cref="LogLimits.MaxLogsFolderMB"/>, oldest files first. A log that a process still writes
+/// (a running app's, through its log keeper or the runtime itself) is never deleted.
+/// </summary>
+internal static class LogRetention
+{
+    /// <summary>Before a launch of <paramref name="p"/> creates its new log. Never throws.</summary>
+    public static void BeforeLaunch(Profile p, LogLimits limits)
+    {
+        try
+        {
+            PruneProfile(AppPaths.LogsDir, p, limits.KeepRunLogs - 1);
+            PruneFolder(AppPaths.LogsDir, limits.MaxLogsFolderBytes);
+        }
+        catch { }
+    }
+
+    /// <summary>The run logs of a profile in <paramref name="dir"/>, newest first.</summary>
+    public static List<FileInfo> LogsOf(string dir, Profile p)
+    {
+        if (!Directory.Exists(dir)) return new List<FileInfo>();
+        var safe = RuntimeLauncher.MakeFileSafe(p.Name);
+        var pattern = new System.Text.RegularExpressions.Regex(
+            "^" + System.Text.RegularExpressions.Regex.Escape(safe) + @"-\d{8}-\d{6}(-\d+)?\.log$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return new DirectoryInfo(dir).EnumerateFiles(safe + "-*.log").Where(f => pattern.IsMatch(f.Name))
+            .OrderByDescending(f => f.LastWriteTimeUtc).ToList();
+    }
+
+    /// <summary>Deletes all but the newest <paramref name="keep"/> logs of a profile. Returns (files, bytes) deleted.</summary>
+    public static (int Files, long Bytes) PruneProfile(string dir, Profile p, int keep)
+    {
+        int files = 0;
+        long bytes = 0;
+        foreach (var f in LogsOf(dir, p).Skip(Math.Max(0, keep)))
+        {
+            long size = f.Length; // before Delete, which forgets it
+            if (TryDelete(f)) { files++; bytes += size; }
+        }
+        return (files, bytes);
+    }
+
+    /// <summary>Deletes the oldest run logs until the folder holds at most <paramref name="maxBytes"/>.</summary>
+    public static (int Files, long Bytes) PruneFolder(string dir, long maxBytes)
+    {
+        int files = 0;
+        long bytes = 0;
+        if (!Directory.Exists(dir)) return (0, 0);
+        var all = new DirectoryInfo(dir).EnumerateFiles("*.log").OrderBy(f => f.LastWriteTimeUtc).ToList();
+        long total = all.Sum(f => f.Length);
+        foreach (var f in all)
+        {
+            if (total <= maxBytes) break;
+            long size = f.Length;
+            if (!TryDelete(f)) continue;
+            total -= size;
+            files++;
+            bytes += size;
+        }
+        return (files, bytes);
+    }
+
+    /// <summary>"Delete old logs": every run log but the newest of each profile, and the logs in use.</summary>
+    public static (int Files, long Bytes) DeleteOld(string dir, IEnumerable<Profile> profiles)
+    {
+        if (!Directory.Exists(dir)) return (0, 0);
+        var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in profiles)
+            if (LogsOf(dir, p).FirstOrDefault() is FileInfo newest) keep.Add(newest.FullName);
+        int files = 0;
+        long bytes = 0;
+        foreach (var f in new DirectoryInfo(dir).EnumerateFiles("*.log").ToList())
+        {
+            if (keep.Contains(f.FullName)) continue;
+            long size = f.Length;
+            if (TryDelete(f)) { files++; bytes += size; }
+        }
+        return (files, bytes);
+    }
+
+    /// <summary>The run logs in the folder: their total size and count.</summary>
+    public static (long Bytes, int Files) FolderSize(string dir)
+    {
+        if (!Directory.Exists(dir)) return (0, 0);
+        var all = new DirectoryInfo(dir).EnumerateFiles("*.log").ToList();
+        return (all.Sum(f => f.Length), all.Count);
+    }
+
+    /// <summary>Deletes a log unless a process has it open for writing (it opens only with FileShare.Read then).</summary>
+    private static bool TryDelete(FileInfo f)
+    {
+        try
+        {
+            using (new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.Read)) { }
+            f.Delete();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Keeps 9 of 15 logs plus one that is open, then caps the folder; in a temporary folder.</summary>
+    public static List<string> SelfTest()
+    {
+        var failures = new List<string>();
+        var dir = Path.Combine(Path.GetTempPath(), $"winapklauncher-selftest-logs-{Environment.ProcessId}");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var p = new Profile { Name = "Self test" };
+            var start = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+            for (int i = 0; i < 15; i++)
+            {
+                var path = Path.Combine(dir, $"Self test-20260101-1200{i:00}.log");
+                File.WriteAllText(path, new string('x', 1000));
+                File.SetLastWriteTimeUtc(path, start.AddMinutes(i));
+            }
+            File.WriteAllText(Path.Combine(dir, "Other-20260101-120000.log"), new string('y', 5000));
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "Other-20260101-120000.log"), start.AddMinutes(-1));
+            using (var open = new FileStream(Path.Combine(dir, "Self test-20260101-120000.log"), FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                PruneProfile(dir, p, 9);
+                int left = LogsOf(dir, p).Count;
+                if (left != 10) failures.Add($"retention: {left} logs left of the profile, expected 9 newest + 1 open");
+                if (!File.Exists(Path.Combine(dir, "Self test-20260101-120000.log"))) failures.Add("retention: deleted a log that is open for writing");
+                PruneFolder(dir, 7000);
+                var (bytes, _) = FolderSize(dir);
+                if (bytes > 7000) failures.Add($"retention: folder at {bytes} bytes, over the 7000-byte limit");
+                if (File.Exists(Path.Combine(dir, "Other-20260101-120000.log"))) failures.Add("retention: the oldest log was not the first to go");
+                if (!File.Exists(Path.Combine(dir, "Self test-20260101-120014.log"))) failures.Add("retention: the newest log was deleted");
+            }
+        }
+        catch (Exception ex) { failures.Add("retention: " + ex.Message); }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+        return failures;
+    }
+}

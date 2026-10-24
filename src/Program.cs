@@ -411,6 +411,7 @@ internal static class Cli
         failures.AddRange(StartupWatch.SelfTest());
         failures.AddRange(L.SelfTest());
         failures.AddRange(CappedLog.SelfTest());
+        failures.AddRange(LogRetention.SelfTest());
         foreach (var f in failures) Console.WriteLine("FAIL: " + f);
         Console.WriteLine(failures.Count == 0 ? "self-test: OK" : $"self-test: {failures.Count} failure(s)");
         return failures.Count == 0 ? 0 : 1;
