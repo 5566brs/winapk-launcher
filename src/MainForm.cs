@@ -195,6 +195,8 @@ public sealed class MainForm : Form
         // Always in the "…" overflow menu.
         var logs = Btn(L.OpenLogsFolder, '\uE8B7', L.OpenLogsFolderTip(RuntimeLauncher.LogsDir), () => OpenLogsFolder());
         logs.Overflow = ToolStripItemOverflow.Always;
+        var logSettings = Btn(L.LogsMenu, '\uE9F9', L.LogsMenuTip, () => BeginInvoke(ShowLogsSettings)); // after the menu has closed
+        logSettings.Overflow = ToolStripItemOverflow.Always;
         BuildLanguageMenu();
         var about = Btn(L.About, '\uE946', L.MainTitle, ShowAbout);
         about.Overflow = ToolStripItemOverflow.Always;
@@ -1275,6 +1277,18 @@ public sealed class MainForm : Form
         return L.RuntimeTip(exe, src);
     }
 
+    /// <summary>The "Logs…" dialog: the log limits are saved on OK.</summary>
+    private void ShowLogsSettings()
+    {
+        using var dlg = new LogsForm(_store.LogLimits, _store.Profiles, RuntimeLauncher.LogsDir);
+        if (_dialogShownHook != null) { var hook = _dialogShownHook; dlg.Shown += (_, _) => hook(dlg); }
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        _store.MaxRunLogMB = dlg.Result.MaxRunLogMB;
+        _store.KeepRunLogs = dlg.Result.KeepRunLogs;
+        _store.MaxLogsFolderMB = dlg.Result.MaxLogsFolderMB;
+        if (_shotDir == null) SaveStore();
+    }
+
     private void ShowAbout()
     {
         var source = new List<string>();
@@ -1465,6 +1479,10 @@ public sealed class MainForm : Form
                 await CaptureSplash(p, log, "splash-busy", SplashShot.Busy);
                 await CaptureSplash(p, log, "splash-error", SplashShot.Exited);
             }
+
+            CaptureNextDialog(Path.Combine(dir, $"logs{_shotSuffix}.png"));
+            ShowLogsSettings();
+            _dialogShownHook = null;
 
             // The Language menu's own path, without the menu: switch, then capture the rebuilt window.
             SetLanguage(L.Current.Code == "he" ? "en" : "he");

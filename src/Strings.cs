@@ -419,6 +419,34 @@ internal static class L
     public static string CouldNotReadLog(string error) => T($"(could not read log: {error})", $"(לא ניתן לקרוא את היומן: {error})");
 
     // =====================================================================
+    // Logs dialog
+    // =====================================================================
+
+    public static string LogsMenu => T("Logs…", "יומנים…");
+    public static string LogsMenuTip => T("Log size limits, the logs folder's size, Delete old logs",
+        "מגבלות הגודל של היומנים, גודל תיקיית היומנים ומחיקת יומנים ישנים");
+    public static string LogsTitle => T("Logs", "יומנים");
+    public static string LogsFolder => T("Logs folder", "תיקיית היומנים");
+    public static string LogsSizeNow => T("Size now", "גודל כרגע");
+    public static string LogsSizeValue(long bytes, int files) =>
+        T($"{bytes / 1048576.0:0.0} MB in {files} {(files == 1 ? "file" : "files")}",
+          $"{Ltr($"{bytes / 1048576.0:0.0} MB")} ב-{(files == 1 ? "קובץ אחד" : $"{files} קבצים")}");
+    public static string LogsMaxRun => T("Largest run log (MB)", "גודל מרבי ליומן הרצה (MB)");
+    public static string LogsKeep => T("Run logs kept per app", "יומני הרצה שנשמרים לכל אפליקציה");
+    public static string LogsMaxFolder => T("Largest logs folder (MB)", "גודל מרבי לתיקיית היומנים (MB)");
+    public static string LogsHint => T(
+        "A run log over its limit keeps its first 256 KB and its newest part. Older run logs are deleted " +
+        "when an app is launched, oldest first. The logs of apps that are running are always kept.",
+        $"יומן הרצה שמגיע לגודל המרבי שומר את {Ltr("256 KB")} הראשונים ואת החלק החדש ביותר. יומני הרצה " +
+        "ישנים נמחקים כשמפעילים אפליקציה, הישנים קודם. היומנים של אפליקציות שפועלות נשמרים תמיד.");
+    public static string LogsDeleteOld => T("Delete old logs", "מחק יומנים ישנים");
+    public static string LogsDeleteOldTip => T("Delete every run log except the newest of each app. The logs of running apps are kept.",
+        "מחק את כל יומני ההרצה חוץ מהחדש ביותר של כל אפליקציה. היומנים של אפליקציות שפועלות נשמרים.");
+    public static string LogsDeleted(int files, long bytes) =>
+        T($"deleted {files} {(files == 1 ? "file" : "files")} ({bytes / 1048576.0:0.0} MB)",
+          $"נמחקו {(files == 1 ? "קובץ אחד" : $"{files} קבצים")} ({Ltr($"{bytes / 1048576.0:0.0} MB")})");
+
+    // =====================================================================
     // Edit dialog
     // =====================================================================
 
