@@ -76,7 +76,7 @@ public sealed class LaunchedProcess
 /// <summary>
 /// Turns a <see cref="Profile"/> into a winapk-runtime.exe invocation: the
 /// --apk/--data command line plus the env vars set for that child process only
-/// (WINAPK_PHONE_SIZE, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL,
+/// (WINAPK_PHONE_SIZE, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL, MACAPK_QUIET_CLASSLOAD,
 /// WINAPK_DENSITY, WINAPK_ALLOW_SECOND_INSTANCE, WINAPK_PROXY). The runtime's stdout and
 /// stderr go to a per-run log file in <see cref="AppPaths.LogsDir"/> through a hidden
 /// <see cref="LogKeeper"/> process that caps its size (or, if that cannot start, straight to the
@@ -133,6 +133,7 @@ public static class RuntimeLauncher
         if (!string.IsNullOrWhiteSpace(jvm)) env.Add(("MACAPK_JVM_OPTS", jvm));
         if (p.LogLevel > 0) env.Add(("MACAPK_LOG_LEVEL", p.LogLevel.ToString()));
         if (p.AllowMultipleInstances) env.Add(("WINAPK_ALLOW_SECOND_INSTANCE", "1"));
+        if (!p.DetailedClassLoadLog) env.Add(("MACAPK_QUIET_CLASSLOAD", "1"));
         if (socksPort != 0) env.Add(("WINAPK_PROXY", WinApkProxyValue(socksPort)));
         return env;
     }

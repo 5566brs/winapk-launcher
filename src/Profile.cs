@@ -44,8 +44,14 @@ public sealed class Profile
     /// <summary>Extra JVM options, space-separated -> MACAPK_JVM_OPTS. Empty leaves it unset.</summary>
     public string JvmOpts { get; set; } = "";
 
-    /// <summary>MACAPK_LOG_LEVEL: 0 = unset (all), 2=V 3=D 4=I 5=W 6=E. The runtime's own default is 0.</summary>
+    /// <summary>
+    /// MACAPK_LOG_LEVEL: 0 = unset (all), 2=V 3=D 4=I 5=W 6=E. The runtime's own default is 0; a new
+    /// profile starts at 4 (<see cref="NewProfileLogLevel"/>), older ones keep theirs.
+    /// </summary>
     public int LogLevel { get; set; } = 0;
+
+    /// <summary>The log level of a profile made with Add app: INFO.</summary>
+    public const int NewProfileLogLevel = 4;
 
     /// <summary>
     /// Allow more than one live instance. The runtime runs one copy per app folder and refuses a
@@ -54,6 +60,12 @@ public sealed class Profile
     /// still starting). Independent accounts still need distinct data roots.
     /// </summary>
     public bool AllowMultipleInstances { get; set; } = false;
+
+    /// <summary>
+    /// Keep the runtime's line for every class it loads ("[I] Mac.apk.AppCl ..."), most of a log.
+    /// False (the default, also for older profiles) sets MACAPK_QUIET_CLASSLOAD=1.
+    /// </summary>
+    public bool DetailedClassLoadLog { get; set; } = false;
 
     // ----- per-app network proxy (routes the app's Java traffic through a local adapter) -----
 

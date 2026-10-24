@@ -21,6 +21,7 @@ public sealed class ProfileForm : Form
     private readonly TextBox _jvm = new();
     private readonly ComboBox _log = new();
     private readonly CheckBox _multi = new();
+    private readonly CheckBox _classLoad = new();
 
     // Network proxy section.
     private readonly ComboBox _proxyType = new();
@@ -219,6 +220,13 @@ public sealed class ProfileForm : Form
         _multi.SetBounds(fieldX, y, wideW, 24);
         _multi.Checked = p.AllowMultipleInstances;
         Controls.Add(_multi);
+        y += 28;
+
+        // Class-loading lines are most of a log; off, the runtime gets MACAPK_QUIET_CLASSLOAD=1.
+        _classLoad.Text = L.FieldClassLoad;
+        _classLoad.SetBounds(fieldX, y, wideW, 24);
+        _classLoad.Checked = p.DetailedClassLoadLog;
+        Controls.Add(_classLoad);
         y += 38;
 
         // ----- Network proxy -----
@@ -407,6 +415,7 @@ public sealed class ProfileForm : Form
         Result.JvmOpts = _jvm.Text.Trim();
         Result.LogLevel = _log.SelectedIndex >= 0 ? LogLevels[_log.SelectedIndex].Level : 0;
         Result.AllowMultipleInstances = _multi.Checked;
+        Result.DetailedClassLoadLog = _classLoad.Checked;
 
         Result.ProxyType = kind.ToString();
         Result.ProxyHost = _proxyHost.Text.Trim();

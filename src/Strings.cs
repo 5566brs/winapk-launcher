@@ -434,6 +434,8 @@ internal static class L
     public static string FieldLogLevel => T("Log level", "רמת רישום");
     public static string FieldMulti => T("Allow multiple instances (WINAPK_ALLOW_SECOND_INSTANCE)",
         $"אפשר כמה מופעים במקביל ({Ltr("WINAPK_ALLOW_SECOND_INSTANCE")})");
+    public static string FieldClassLoad => T("Detailed class-loading log (without MACAPK_QUIET_CLASSLOAD)",
+        $"יומן מפורט של טעינת מחלקות (בלי {Ltr("MACAPK_QUIET_CLASSLOAD")})");
     public static string Browse => T("Browse…", "עיון…");
     public static string HintDataRoot => T("Each profile needs its OWN data root. Two profiles on the same APK\n" +
                                            "with different roots = two independent instances/accounts.",

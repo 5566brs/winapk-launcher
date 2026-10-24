@@ -1067,6 +1067,7 @@ public sealed class MainForm : Form
             ApkPath = apkPath ?? "",
             PhoneWidthDp = 360,
             PhoneHeightDp = 800,
+            LogLevel = Profile.NewProfileLogLevel,
             DataRoot = _store.SuggestDataRoot(name),
         };
         using var dlg = new ProfileForm(p, isNew: true, n => _store.SuggestDataRoot(n));
@@ -1367,6 +1368,7 @@ public sealed class MainForm : Form
         JvmOpts = p.JvmOpts,
         LogLevel = p.LogLevel,
         AllowMultipleInstances = p.AllowMultipleInstances,
+        DetailedClassLoadLog = p.DetailedClassLoadLog,
         ProxyType = p.ProxyType,
         ProxyHost = p.ProxyHost,
         ProxyPort = p.ProxyPort,
