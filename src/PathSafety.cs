@@ -369,7 +369,7 @@ internal static class PathSafety
         {
             Id = "0123456789abcdef0123456789abcdef",
             Name = "Notes",
-            ApkPath = "C:\\Users\\\u05DE\u05E9\u05EA\u05DE\u05E9\\Downloads\\\u05E4\u05EA\u05E7\u05D9\u05DD.apk",  // פתקים.apk
+            ApkPath = "X:\\Profiles\\\u05DE\u05E9\u05EA\u05DE\u05E9\\Downloads\\\u05E4\u05EA\u05E7\u05D9\u05DD.apk",  // פתקים.apk
             DataRoot = heb + "\\WinApk Launcher\\apps\\Notes",
         };
         var r = Resolve(p, heb + "\\Programs\\WinApk Launcher\\runtime\\bin\\winapk-runtime.exe", prepare: false,
