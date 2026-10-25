@@ -5,6 +5,33 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-10-25
+
+### Fixed
+
+- WhatsApp's first launch on a fresh install no longer shows its "corrupt installation" screen.
+  WhatsApp unpacks its own native libraries during that first run. The bundled runtime now prepares
+  an app's native library at the moment the app loads it, so libraries an app unpacks itself load
+  too.
+- Telegram no longer crashes 15–30 seconds after it starts. The runtime now gives app native code
+  Android's zlib (`libz.so`).
+- Links now match an app's intent filters by host, port and path, as on Android, not by scheme
+  alone. An app no longer claims every web link, so Spotify's sign-in check opens a web page
+  instead of looping back to its first screen.
+- Spotify no longer fails right after its screen opens (`Don't call setTitle() directly`).
+- Telegram's intro logo animation shows: OpenGL ES uses ANGLE's Direct3D 11 display on Windows,
+  with its multisample configurations.
+- More Android system functions for app native code: `rand48`, `statfs`, `getopt`, libjnigraphics
+  bitmaps, and the OpenSL ES interface IDs and media-format keys, so libraries that use them load.
+
+### Known issues
+
+- Spotify's sign-in can't finish yet. After its web check, the browser keeps Spotify's return
+  link instead of handing it back to the app. An in-app browser view is planned.
+- Telegram has no sound yet (voice messages, calls): OpenSL ES audio is not implemented.
+
+The bundled runtime is `5566brs/win.apk` `bundle/v0.1.5`.
+
 ## [0.1.4] - 2026-10-25
 
 ### Fixed
