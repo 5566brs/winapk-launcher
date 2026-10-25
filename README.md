@@ -100,7 +100,9 @@ To add a language, see the comment at the top of [`src/Strings.cs`](src/Strings.
 1. Download `WinApkLauncher-Setup-<version>.exe` from the
    [Releases page](https://github.com/5566brs/winapk-launcher/releases).
 2. Run it. It installs for your Windows user only and doesn't need administrator rights. The
-   program goes to `%LOCALAPPDATA%\Programs\WinApk Launcher`.
+   program goes to `%LOCALAPPDATA%\Programs\WinApk Launcher`. If that path has a letter that the
+   Windows setting **Language for non-Unicode programs** can't show, the program goes to
+   `C:\WinApk Launcher` instead; see [Folder names in any language](#folder-names-in-any-language).
 3. **Optional:** select **Create a desktop shortcut**.
 4. **Optional:** select **Add "Open with WinApk Launcher" to .apk and .xapk files**. Explorer
    then offers WinApk Launcher in **Open with** and in the right-click menu. Opening a file with
@@ -203,6 +205,27 @@ launcher keeps its data root on disk.
 
 Win.apk's own app library (`Win.apk.exe`) keeps its data in `%LOCALAPPDATA%\Win.apk`. The launcher
 doesn't use or change that folder.
+
+### Folder names in any language
+
+Apps work in folders with names in any language, such as a Windows user name in Hebrew, whatever
+**Language for non-Unicode programs** is set to. The runtime from `bundle/v0.1.3` on takes such
+paths by itself on Windows 10 version 1903 and later.
+
+On older Windows, or with an older runtime, the launcher moves each path that the setting's code
+page can't hold to a folder under `C:\WinApk Launcher`, and shows a one-line notice:
+
+| Path | Moves to |
+|---|---|
+| The data root | `C:\WinApk Launcher\apps\<name>-<profile id>` |
+| The temp folder (`TMP`, `TEMP`, `java.io.tmpdir`) | `C:\WinApk Launcher\temp` |
+| The APK | a copy in `C:\WinApk Launcher\apks\<profile id>\`, refreshed when the APK changes |
+| The runtime's folder | a directory junction `C:\WinApk Launcher\runtime-<hash>` that points to it |
+
+Paths that the code page can hold stay as they are, and nothing needs to be set. `--dry-run`
+shows what would move. For tests, `WINAPK_ANSI_PATHS=1` moves the paths on any Windows (`0`
+never), `WINAPK_LAUNCHER_TEST_ACP=<code page>` checks against another code page, and
+`WINAPK_LAUNCHER_SAFE_ROOT=<folder>` replaces `C:\WinApk Launcher`.
 
 ### How the launcher finds the runtime
 

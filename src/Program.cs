@@ -269,7 +269,7 @@ internal static class Cli
             return RuntimeInstance.ExitAlreadyRunning;
         }
 
-        Console.WriteLine($"command: {RuntimeLauncher.BuildCommandLine(runtime, p)}");
+        Console.WriteLine($"command: {RuntimeLauncher.BuildCommandLine(PathSafety.Resolve(p, runtime))}");
         if (p.HasProxy) Console.WriteLine($"proxy:   {p.ProxyLabel}{(p.ResolveProxy()!.HasAuth ? " (auth)" : "")} via a local SOCKS5 adapter");
 
         var lp = RuntimeLauncher.Start(runtime, p, store.LogLimits);
@@ -279,9 +279,10 @@ internal static class Cli
         if (lp.ProxyAdapter != null) Console.WriteLine($"proxy adapter: pid {lp.ProxyAdapter.Id} on 127.0.0.1:{lp.ProxyPort}");
         Console.WriteLine("env:");
         foreach (var (k, v) in lp.Env) Console.WriteLine($"  {k}={v}");
+        foreach (var note in lp.Paths.Notes) Console.WriteLine($"moved: {note}");
         Console.WriteLine($"log: {lp.LogPath}");
-        if (Directory.Exists(RuntimeLauncher.RuntimeLogDir(p)))
-            Console.WriteLine($"runtime data/logs: {RuntimeLauncher.RuntimeLogDir(p)}");
+        var runtimeLogs = Path.Combine(lp.Paths.DataRoot, "logs");
+        if (Directory.Exists(runtimeLogs)) Console.WriteLine($"runtime data/logs: {runtimeLogs}");
 
         if (seconds < 0)
         {
@@ -343,8 +344,16 @@ internal static class Cli
         Console.WriteLine($"store:   {LauncherStore.StorePath}");
         Console.WriteLine($"runtime: {store.DescribeRuntime()}");
         Console.WriteLine($"profile: {p.Name}  [{p.Id}]");
-        Console.WriteLine($"exe:  {runtime ?? "(none)"}");
-        Console.WriteLine($"args: --apk \"{p.ApkPath}\" --data \"{p.DataRoot}\"");
+        // The paths the runtime would get (PathSafety): the profile's own unless the runtime reads
+        // paths in an ANSI code page that cannot hold them.
+        var paths = runtime == null ? null : PathSafety.Resolve(p, runtime);
+        var needed = runtime != null && PathSafety.Needed(runtime);
+        Console.WriteLine($"paths: ANSI code page {PathSafety.AnsiCodePage}; " + (needed
+            ? "the runtime reads paths in it (Windows before 10 1903, or a runtime without the UTF-8 manifest)"
+            : "the runtime takes any path (its UTF-8 manifest, Windows 10 1903 or later)"));
+        foreach (var note in paths?.Notes ?? Array.Empty<string>()) Console.WriteLine($"  moved: {note}");
+        Console.WriteLine($"exe:  {paths?.RuntimeExe ?? runtime ?? "(none)"}");
+        Console.WriteLine($"args: --apk \"{paths?.ApkPath ?? p.ApkPath}\" --data \"{paths?.DataRoot ?? p.DataRoot}\"");
         if (p.HasProxy)
         {
             var cfg = p.ResolveProxy()!;
@@ -358,7 +367,7 @@ internal static class Cli
             : $"phone: {p.PhoneWidthDp}x{p.PhoneHeightDp} dp (WINAPK_PHONE_SIZE); fitted to the screen");
         Console.WriteLine("env:");
         // socksPort = -1 shows the placeholder flags the adapter would fill in at launch.
-        foreach (var (k, v) in RuntimeLauncher.BuildEnv(p, p.HasProxy ? -1 : 0))
+        foreach (var (k, v) in RuntimeLauncher.BuildEnv(p, p.HasProxy ? -1 : 0, paths))
             Console.WriteLine($"  {k}={v}");
         var val = RuntimeLauncher.Validate(runtime, p);
         Console.WriteLine(val == null ? "validation: OK (would launch)" : "validation: " + val.Replace("\n", " "));
@@ -391,7 +400,8 @@ internal static class Cli
         var p = store.Find(nameOrId);
         if (p == null) { Console.Error.WriteLine($"no such profile: {nameOrId}"); return 2; }
         var runtime = store.ResolveRuntime();
-        var appDir = RuntimeInstance.AppDir(p.DataRoot, p.ApkPath);
+        var paths = PathSafety.Resolve(p, runtime);
+        var appDir = RuntimeInstance.AppDir(paths.DataRoot, paths.ApkPath);
         var probe = RuntimeInstance.Probe(p, runtime);
         Console.WriteLine($"profile: {p.Name}  [{p.Id}]");
         Console.WriteLine($"app folder: {appDir}");
@@ -416,6 +426,8 @@ internal static class Cli
         failures.AddRange(CappedLog.SelfTest());
         failures.AddRange(LogRetention.SelfTest());
         failures.AddRange(ConnLog.SelfTest());
+        failures.AddRange(PathSafety.SelfTest());
+        failures.AddRange(RuntimeLauncher.SelfTest());
         foreach (var f in failures) Console.WriteLine("FAIL: " + f);
         Console.WriteLine(failures.Count == 0 ? "self-test: OK" : $"self-test: {failures.Count} failure(s)");
         return failures.Count == 0 ? 0 : 1;

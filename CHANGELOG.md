@@ -15,6 +15,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the app keeps its layout (360 x 800 dp stays 360 x 800 dp) and stays sharp. The window is fitted
   again when it moves to another monitor or the taskbar changes. This needs the runtime from
   `5566brs/win.apk` `bundle/v0.1.3`.
+- Apps no longer fail when a folder name has letters that the Windows setting **Language for
+  non-Unicode programs** can't show, such as a Windows user name in Hebrew on an English system.
+  Before, installing the app stopped with "could not find java.dll" or "Illegal char <?>". The
+  runtime from `bundle/v0.1.3` takes such paths by itself on Windows 10 version 1903 and later.
+  On older Windows, or with an older runtime, the launcher moves each such path to a
+  plain-letter folder under `C:\WinApk Launcher` (the data root, the temp folder, a copy of the
+  APK, and a junction to the runtime's folder) and shows a one-line notice. Paths that the
+  setting can show stay as they are. `--dry-run` shows what would move.
+- When `%LOCALAPPDATA%` has such a letter, the installer installs to `C:\WinApk Launcher`
+  instead of `%LOCALAPPDATA%\Programs\WinApk Launcher`, still for the current user only and
+  without administrator rights.
 
 ### Changed
 

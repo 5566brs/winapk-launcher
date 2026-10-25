@@ -113,6 +113,16 @@ public sealed class Profile
         return new ProxyConfig(ProxyKind, ProxyHost.Trim(), ProxyPort, ProxyUser?.Trim() ?? "", GetProxyPassword());
     }
 
+    /// <summary>A copy of this profile with the paths a launch hands the runtime (<see cref="PathSafety"/>).</summary>
+    public Profile WithPaths(LaunchPaths paths)
+    {
+        if (paths.ApkPath == ApkPath && paths.DataRoot == DataRoot) return this;
+        var copy = (Profile)MemberwiseClone();
+        copy.ApkPath = paths.ApkPath;
+        copy.DataRoot = paths.DataRoot;
+        return copy;
+    }
+
     /// <summary>Short label for UI ("socks5 host:1080") or "" when no proxy.</summary>
     public string ProxyLabel => HasProxy ? $"{ProxyKind.ToString().ToLowerInvariant()} {ProxyHost.Trim()}:{ProxyPort}" : "";
 }
@@ -266,12 +276,12 @@ public sealed class LauncherStore
         if (!string.IsNullOrWhiteSpace(RuntimeExe) && File.Exists(RuntimeExe.Trim()))
         {
             source = RuntimeSource.Settings;
-            return RuntimeExe.Trim();
+            return PathSafety.DefaultRuntime = RuntimeExe.Trim();
         }
         if (File.Exists(AppPaths.BundledRuntimeExe))
         {
             source = RuntimeSource.Bundled;
-            return AppPaths.BundledRuntimeExe;
+            return PathSafety.DefaultRuntime = AppPaths.BundledRuntimeExe;
         }
         source = RuntimeSource.None;
         return null;
@@ -346,9 +356,18 @@ public sealed class LauncherStore
             Profiles.Where(p => p.Id != exceptId && !string.IsNullOrWhiteSpace(p.DataRoot))
                     .Select(p => Path.TrimEndingDirectorySeparator(p.DataRoot.Trim())),
             StringComparer.OrdinalIgnoreCase);
-        var candidate = Path.Combine(AppPaths.AppsDir, baseName);
+        // Where the runtime cannot take a path the ANSI code page cannot hold (PathSafety), a new
+        // profile starts in C:\WinApk Launcher\apps instead.
+        var apps = AppPaths.AppsDir;
+        int cp = PathSafety.AnsiCodePage;
+        if (PathSafety.Needed(ResolveRuntime()) && !PathSafety.Survives(apps, cp))
+        {
+            apps = Path.Combine(PathSafety.SafeRoot, "apps");
+            baseName = PathSafety.SafeName(baseName, cp);
+        }
+        var candidate = Path.Combine(apps, baseName);
         for (int n = 2; taken.Contains(candidate); n++)
-            candidate = Path.Combine(AppPaths.AppsDir, $"{baseName} ({n})");
+            candidate = Path.Combine(apps, $"{baseName} ({n})");
         return candidate;
     }
 }

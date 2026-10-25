@@ -169,6 +169,10 @@ internal static class RuntimeInstance
     /// </summary>
     public static InstanceProbe Probe(Profile p, string? runtimeExe)
     {
+        // The paths the runtime got, which may be plain-letter stand-ins (PathSafety).
+        var paths = PathSafety.Resolve(p, runtimeExe);
+        p = p.WithPaths(paths);
+        runtimeExe = paths.RuntimeExe;
         var name = MutexName(p.DataRoot, p.ApkPath, runtimeExe);
         bool held = !p.AllowMultipleInstances && MutexExists(name);
         var procs = FindProcesses(p, runtimeExe);
@@ -196,6 +200,9 @@ internal static class RuntimeInstance
     {
         var result = new List<RuntimeProcess>();
         if (string.IsNullOrWhiteSpace(p.ApkPath)) return result;
+        var paths = PathSafety.Resolve(p, runtimeExe);
+        p = p.WithPaths(paths);
+        runtimeExe = paths.RuntimeExe;
         var want = Key(AppDir(p.DataRoot, p.ApkPath), RuntimeWorkingDir(runtimeExe));
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { RuntimeProcessName };
         if (!string.IsNullOrWhiteSpace(runtimeExe)) names.Add(Path.GetFileNameWithoutExtension(runtimeExe));

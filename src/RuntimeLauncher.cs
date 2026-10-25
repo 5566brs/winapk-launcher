@@ -14,6 +14,9 @@ public sealed class LaunchedProcess
     public required IReadOnlyList<(string Key, string Value)> Env { get; init; }
     public required Profile Profile { get; init; }
 
+    /// <summary>The paths the runtime got: the profile's own, or plain-letter ones (<see cref="PathSafety"/>).</summary>
+    public required LaunchPaths Paths { get; init; }
+
     /// <summary>The per-app proxy adapter child, when this launch has a proxy; else null.</summary>
     public Process? ProxyAdapter { get; internal set; }
     public int ProxyPort { get; internal set; }
@@ -92,8 +95,10 @@ public static class RuntimeLauncher
     /// </summary>
     public static bool LaunchBlocked { get; set; }
 
-    /// <summary>The runtime's own crash/error files (hs_err, JVM ErrorFile) live here.</summary>
-    public static string RuntimeLogDir(Profile p) => Path.Combine(p.DataRoot, "logs");
+    /// <summary>The runtime's own crash/error files (hs_err, JVM ErrorFile) live here: under the data
+    /// root the runtime gets (<see cref="PathSafety"/>).</summary>
+    public static string RuntimeLogDir(Profile p, string? runtimeExe = null) =>
+        Path.Combine(PathSafety.Resolve(p, runtimeExe).DataRoot, "logs");
 
     /// <summary>The socks-proxy JVM flags appended for the adapter port; blank placeholder for --dry-run.</summary>
     public static string SocksJvmFlags(int socksPort) =>
@@ -112,23 +117,32 @@ public static class RuntimeLauncher
     /// adapter is in use. <paramref name="socksPort"/> is the adapter's live port, or 0 (no proxy),
     /// or -1 to show a placeholder for --dry-run.
     /// </summary>
-    public static string EffectiveJvmOpts(Profile p, int socksPort)
+    public static string EffectiveJvmOpts(Profile p, int socksPort, LaunchPaths? paths = null)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(p.JvmOpts)) parts.Add(p.JvmOpts.Trim());
         if (socksPort != 0) parts.Add(SocksJvmFlags(socksPort));
+        if (paths?.TempDir != null && PathSafety.TmpDirOption(paths.TempDir) is { } tmp) parts.Add(tmp);
         return string.Join(' ', parts);
     }
 
-    public static List<(string Key, string Value)> BuildEnv(Profile p, int socksPort = 0)
+    /// <summary>The env vars set on the runtime. <paramref name="paths"/> (from
+    /// <see cref="PathSafety.Resolve(Profile, string?, bool)"/>) adds TMP and TEMP when the user's
+    /// temp folder moved.</summary>
+    public static List<(string Key, string Value)> BuildEnv(Profile p, int socksPort = 0, LaunchPaths? paths = null)
     {
         var env = new List<(string, string)>();
+        if (paths?.TempDir != null)
+        {
+            env.Add(("TMP", paths.TempDir));
+            env.Add(("TEMP", paths.TempDir));
+        }
         // Only a size other than the runtime's default (360x800). The runtime fits the window to the
         // screen's work area by lowering the density, with or without it.
         if (!p.UsesDefaultPhoneSize) env.Add(("WINAPK_PHONE_SIZE", $"{p.PhoneWidthDp}x{p.PhoneHeightDp}"));
         if (p.SdkInt > 0) env.Add(("MACAPK_SDK_INT", p.SdkInt.ToString()));
         if (p.DensityDpi > 0) env.Add(("WINAPK_DENSITY", p.DensityDpi.ToString()));
-        var jvm = EffectiveJvmOpts(p, socksPort);
+        var jvm = EffectiveJvmOpts(p, socksPort, paths);
         if (!string.IsNullOrWhiteSpace(jvm)) env.Add(("MACAPK_JVM_OPTS", jvm));
         if (p.LogLevel > 0) env.Add(("MACAPK_LOG_LEVEL", p.LogLevel.ToString()));
         if (p.AllowMultipleInstances) env.Add(("WINAPK_ALLOW_SECOND_INSTANCE", "1"));
@@ -139,6 +153,10 @@ public static class RuntimeLauncher
 
     public static string BuildCommandLine(string? runtimeExe, Profile p) =>
         $"\"{runtimeExe}\" --apk \"{p.ApkPath}\" --data \"{p.DataRoot}\"";
+
+    /// <summary>The command line for the paths a launch hands the runtime.</summary>
+    public static string BuildCommandLine(LaunchPaths paths) =>
+        $"\"{paths.RuntimeExe}\" --apk \"{paths.ApkPath}\" --data \"{paths.DataRoot}\"";
 
     /// <summary>Validate a profile before launch; returns an error message or null.</summary>
     public static string? Validate(string? runtimeExe, Profile p)
@@ -168,7 +186,9 @@ public static class RuntimeLauncher
         var err = Validate(runtimeExe, p);
         if (err != null || runtimeExe == null) throw new InvalidOperationException(err ?? "no runtime");
 
-        Directory.CreateDirectory(p.DataRoot);
+        // Plain-letter paths where the runtime reads paths in the ANSI code page (PathSafety).
+        var paths = PathSafety.Resolve(p, runtimeExe, prepare: true);
+        Directory.CreateDirectory(paths.DataRoot);
         Directory.CreateDirectory(LogsDir);
         LogRetention.BeforeLaunch(p, limits); // the newest KeepRunLogs of this app stay, counting the new one
         var logPath = NewLogPath(p);
@@ -185,8 +205,8 @@ public static class RuntimeLauncher
             }
         }
 
-        var env = BuildEnv(p, socksPort);
-        var commandLine = BuildCommandLine(runtimeExe, p);
+        var env = BuildEnv(p, socksPort, paths);
+        var commandLine = BuildCommandLine(paths);
         SafeFileHandle? log = null;
         Process? keeper = null;
         try
@@ -200,13 +220,19 @@ public static class RuntimeLauncher
             H($"{DateTime.Now:O}");
             H($"profile: {p.Name}");
             H($"command: {commandLine}");
+            if (paths.Moved)
+            {
+                H($"paths: the runtime reads paths in the ANSI code page ({PathSafety.AnsiCodePage}), which cannot hold these; moved:");
+                foreach (var note in paths.Notes) H($"  {note}");
+            }
             H("env:");
             foreach (var (k, v) in env) H($"  {k}={v}");
             if (adapter != null) H($"proxy: {p.ProxyLabel} via local adapter 127.0.0.1:{socksPort} (pid {adapter.Process.Id})");
             H(keeper != null ? $"log: kept under {limits.MaxRunLogMB} MB by the log keeper (pid {keeper.Id})"
                              : "log: not capped (the log keeper did not start)");
             // Only once the runtime has made it: on a first launch it does not exist yet.
-            if (Directory.Exists(RuntimeLogDir(p))) H($"runtime data/logs: {RuntimeLogDir(p)}");
+            var runtimeLogs = Path.Combine(paths.DataRoot, "logs");
+            if (Directory.Exists(runtimeLogs)) H($"runtime data/logs: {runtimeLogs}");
             H("----------------------------------------------------------------");
             NativeProcess.Append(log, header.ToString());
 
@@ -216,6 +242,7 @@ public static class RuntimeLauncher
                 CommandLine = commandLine,
                 Env = env,
                 Profile = p,
+                Paths = paths,
                 ProxyAdapter = adapter?.Process,
                 ProxyPort = socksPort,
                 LogKeeper = keeper,
@@ -223,8 +250,8 @@ public static class RuntimeLauncher
             launched.AttachLog(log);
 
             using var nul = NativeProcess.OpenNul();
-            launched.Process = NativeProcess.Start(runtimeExe, new[] { "--apk", p.ApkPath, "--data", p.DataRoot }, env,
-                Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory, stdin: nul, stdout: log, stderr: log,
+            launched.Process = NativeProcess.Start(paths.RuntimeExe, new[] { "--apk", paths.ApkPath, "--data", paths.DataRoot }, env,
+                Path.GetDirectoryName(paths.RuntimeExe) ?? AppContext.BaseDirectory, stdin: nul, stdout: log, stderr: log,
                 beforeResume: proc =>
                 {
                     proc.EnableRaisingEvents = true;
@@ -299,6 +326,26 @@ public static class RuntimeLauncher
             return string.Join(Environment.NewLine, take);
         }
         catch (Exception ex) { return L.CouldNotReadLog(ex.Message); }
+    }
+
+    /// <summary>The env a launch builds: the phone size only when it is not the default, TMP and
+    /// TEMP only when the temp folder moved.</summary>
+    public static List<string> SelfTest()
+    {
+        var failures = new List<string>();
+        bool Has(List<(string Key, string Value)> env, string key) => env.Any(e => e.Key == key);
+        var def = new Profile();
+        if (Has(BuildEnv(def), "WINAPK_PHONE_SIZE")) failures.Add("BuildEnv: the default 360x800 must not set WINAPK_PHONE_SIZE");
+        var big = new Profile { PhoneWidthDp = 412, PhoneHeightDp = 915 };
+        if (!BuildEnv(big).Contains(("WINAPK_PHONE_SIZE", "412x915"))) failures.Add("BuildEnv: 412x915 must set WINAPK_PHONE_SIZE=412x915");
+        if (Has(BuildEnv(def), "TMP")) failures.Add("BuildEnv: TMP must stay unset when the temp folder did not move");
+        var moved = new LaunchPaths("x.exe", "a.apk", @"C:\d", @"C:\WinApkTemp", new[] { "TEMP moved" });
+        var env = BuildEnv(def, 0, moved);
+        if (!env.Contains(("TMP", @"C:\WinApkTemp")) || !env.Contains(("TEMP", @"C:\WinApkTemp")))
+            failures.Add("BuildEnv: a moved temp folder must set TMP and TEMP");
+        if (!env.Contains(("MACAPK_JVM_OPTS", @"-Djava.io.tmpdir=C:\WinApkTemp")))
+            failures.Add("BuildEnv: a moved temp folder must pass -Djava.io.tmpdir");
+        return failures;
     }
 
     public static string MakeFileSafe(string s)

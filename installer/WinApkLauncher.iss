@@ -14,7 +14,9 @@
 ; Two languages, English and Hebrew (compiler:Languages\Hebrew.isl, which Inno Setup 6 ships): Setup
 ; asks, with the Windows display language preselected. This file is UTF-8.
 ;
-; Installs per user (no administrator rights) to %LOCALAPPDATA%\Programs\WinApk Launcher.
+; Installs per user (no administrator rights) to %LOCALAPPDATA%\Programs\WinApk Launcher, or to
+; C:\WinApk Launcher on the system drive when that path has a character the ANSI code page cannot
+; hold (AnsiPath.iss).
 ; Uninstalling removes the program files only: the settings (%APPDATA%\WinApk Launcher) and the
 ; apps' data, cache and logs (%LOCALAPPDATA%\WinApk Launcher) are kept.
 
@@ -56,7 +58,7 @@ VersionInfoVersion={#NumericVersion}
 VersionInfoProductName={#AppName}
 VersionInfoProductTextVersion={#AppVersion}
 VersionInfoDescription={#AppName} setup
-DefaultDirName={localappdata}\Programs\WinApk Launcher
+DefaultDirName={code:DefaultInstallDir}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
@@ -162,3 +164,5 @@ Type: filesandordirs; Name: "{app}\runtime"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:RunAfter,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+#include "AnsiPath.iss"

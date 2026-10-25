@@ -490,8 +490,12 @@ internal sealed class SplashForm : Form
     // ----- finding an open startup window -----
 
     /// <summary>The key of a profile's app folder, as the runtime's lock name uses it.</summary>
-    public static ulong KeyFor(Profile p, string? runtimeExe) =>
-        RuntimeInstance.Fnv1a(RuntimeInstance.Key(RuntimeInstance.AppDir(p.DataRoot, p.ApkPath), RuntimeInstance.RuntimeWorkingDir(runtimeExe)));
+    public static ulong KeyFor(Profile p, string? runtimeExe)
+    {
+        var paths = PathSafety.Resolve(p, runtimeExe); // the paths the runtime got
+        return RuntimeInstance.Fnv1a(RuntimeInstance.Key(RuntimeInstance.AppDir(paths.DataRoot, paths.ApkPath),
+            RuntimeInstance.RuntimeWorkingDir(paths.RuntimeExe)));
+    }
 
     /// <summary>Held by every startup window and --splash process while it lives.</summary>
     public static string MarkerName(ulong key) => $@"Local\WinApkLauncher-splash-{key:x16}";

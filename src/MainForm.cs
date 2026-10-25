@@ -803,6 +803,20 @@ public sealed class MainForm : Form
         RefreshAll();
         _status.Text = L.StatusLaunched(p.Name, lp.LogPath);
         ShowSplash(watch);
+        if (lp.Paths.Moved) ShowPathsNotice(p);
+    }
+
+    private readonly HashSet<string> _pathsNoticeShown = new();
+
+    /// <summary>Once per profile and session: the app runs from plain-letter folders (PathSafety).
+    /// Not modal; the launch goes on.</summary>
+    private void ShowPathsNotice(Profile p)
+    {
+        if (!_pathsNoticeShown.Add(p.Id)) return;
+        var dlg = new LauncherDialog(AppInfo.ProductName, L.PathsNoticeHeading(p.Name, PathSafety.SafeRoot),
+            L.PathsNoticeBody, new[] { new DialogButton("ok", L.Ok, Accent: true) });
+        dlg.FormClosed += (_, _) => dlg.Dispose();
+        dlg.Show(this);
     }
 
     /// <summary>
@@ -1168,8 +1182,9 @@ public sealed class MainForm : Form
         if (p == null) return;
         try
         {
-            Directory.CreateDirectory(p.DataRoot);
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{p.DataRoot}\"") { UseShellExecute = true });
+            var data = PathSafety.Resolve(p, _store.ResolveRuntime()).DataRoot; // where the runtime keeps it
+            Directory.CreateDirectory(data);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{data}\"") { UseShellExecute = true });
         }
         catch (Exception ex) { Msg.Show(this, ex.Message, L.OpenFolderCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
