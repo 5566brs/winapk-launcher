@@ -26,6 +26,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When `%LOCALAPPDATA%` has such a letter, the installer installs to `C:\WinApk Launcher`
   instead of `%LOCALAPPDATA%\Programs\WinApk Launcher`, still for the current user only and
   without administrator rights.
+- Bundled runtime: app code now reads `File.separator` and `File.separatorChar` as `/`, as on
+  Android, instead of Windows' `\`. Apps that build patterns or zip entry names from them no
+  longer fail. For example, Maccabi's library loader stopped with `PatternSyntaxException`, and
+  now reports its missing ARM-only libraries cleanly. `MACAPK_ANDROID_FILE_SEPARATOR=0` turns
+  this off.
 
 ### Changed
 
