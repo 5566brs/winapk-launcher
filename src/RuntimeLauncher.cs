@@ -76,7 +76,7 @@ public sealed class LaunchedProcess
 /// <summary>
 /// Turns a <see cref="Profile"/> into a winapk-runtime.exe invocation: the
 /// --apk/--data command line plus the env vars set for that child process only
-/// (WINAPK_PHONE_SIZE, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL, MACAPK_QUIET_CLASSLOAD,
+/// (WINAPK_PHONE_SIZE for a size other than 360x800, MACAPK_SDK_INT, MACAPK_JVM_OPTS, MACAPK_LOG_LEVEL, MACAPK_QUIET_CLASSLOAD,
 /// WINAPK_DENSITY, WINAPK_ALLOW_SECOND_INSTANCE, WINAPK_PROXY). The runtime's stdout and
 /// stderr go to a per-run log file in <see cref="AppPaths.LogsDir"/> through a hidden
 /// <see cref="LogKeeper"/> process that caps its size (or, if that cannot start, straight to the
@@ -122,11 +122,10 @@ public static class RuntimeLauncher
 
     public static List<(string Key, string Value)> BuildEnv(Profile p, int socksPort = 0)
     {
-        var env = new List<(string, string)>
-        {
-            // Always set: we always have a concrete phone size.
-            ("WINAPK_PHONE_SIZE", $"{p.PhoneWidthDp}x{p.PhoneHeightDp}"),
-        };
+        var env = new List<(string, string)>();
+        // Only a size other than the runtime's default (360x800). The runtime fits the window to the
+        // screen's work area by lowering the density, with or without it.
+        if (!p.UsesDefaultPhoneSize) env.Add(("WINAPK_PHONE_SIZE", $"{p.PhoneWidthDp}x{p.PhoneHeightDp}"));
         if (p.SdkInt > 0) env.Add(("MACAPK_SDK_INT", p.SdkInt.ToString()));
         if (p.DensityDpi > 0) env.Add(("WINAPK_DENSITY", p.DensityDpi.ToString()));
         var jvm = EffectiveJvmOpts(p, socksPort);

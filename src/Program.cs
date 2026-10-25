@@ -353,6 +353,9 @@ internal static class Cli
             Console.WriteLine($"proxy: {p.ProxyLabel}{user}{masked}  (local SOCKS5 adapter -> this upstream)");
         }
         else Console.WriteLine("proxy: none");
+        Console.WriteLine(p.UsesDefaultPhoneSize
+            ? $"phone: {p.PhoneWidthDp}x{p.PhoneHeightDp} dp, the runtime's default (no WINAPK_PHONE_SIZE); fitted to the screen"
+            : $"phone: {p.PhoneWidthDp}x{p.PhoneHeightDp} dp (WINAPK_PHONE_SIZE); fitted to the screen");
         Console.WriteLine("env:");
         // socksPort = -1 shows the placeholder flags the adapter would fill in at launch.
         foreach (var (k, v) in RuntimeLauncher.BuildEnv(p, p.HasProxy ? -1 : 0))

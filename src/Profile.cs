@@ -31,9 +31,15 @@ public sealed class Profile
     /// <summary>Per-profile data root passed as --data (library, apps, android, logs live here).</summary>
     public string DataRoot { get; set; } = "";
 
-    // Emulated phone size in dp -> WINAPK_PHONE_SIZE=<w>x<h>. Runtime default is 360x800.
-    public int PhoneWidthDp { get; set; } = 360;
-    public int PhoneHeightDp { get; set; } = 800;
+    // Emulated phone size in dp -> WINAPK_PHONE_SIZE=<w>x<h>, set only when it is not the runtime's
+    // default, 360x800. The runtime fits the window to the screen either way.
+    public const int DefaultPhoneWidthDp = 360, DefaultPhoneHeightDp = 800;
+    public int PhoneWidthDp { get; set; } = DefaultPhoneWidthDp;
+    public int PhoneHeightDp { get; set; } = DefaultPhoneHeightDp;
+
+    /// <summary>The runtime's own default size: no WINAPK_PHONE_SIZE is sent.</summary>
+    [JsonIgnore]
+    public bool UsesDefaultPhoneSize => PhoneWidthDp == DefaultPhoneWidthDp && PhoneHeightDp == DefaultPhoneHeightDp;
 
     /// <summary>Android API level -> MACAPK_SDK_INT. 0 means leave unset (runtime default, API 29).</summary>
     public int SdkInt { get; set; } = 0;

@@ -1067,8 +1067,8 @@ public sealed class MainForm : Form
         {
             Name = name,
             ApkPath = apkPath ?? "",
-            PhoneWidthDp = 360,
-            PhoneHeightDp = 800,
+            PhoneWidthDp = Profile.DefaultPhoneWidthDp,
+            PhoneHeightDp = Profile.DefaultPhoneHeightDp,
             LogLevel = Profile.NewProfileLogLevel,
             DataRoot = _store.SuggestDataRoot(name),
         };

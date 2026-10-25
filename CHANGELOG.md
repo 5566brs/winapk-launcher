@@ -5,6 +5,22 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- On a small or scaled screen, the bottom of an app's window, with buttons like **Agree and
+  continue**, no longer hides behind the taskbar. The runtime fits the whole window, title bar
+  included, into the screen's work area. It does that by lowering the density the app draws at, so
+  the app keeps its layout (360 x 800 dp stays 360 x 800 dp) and stays sharp. The window is fitted
+  again when it moves to another monitor or the taskbar changes. This needs the runtime from
+  `5566brs/win.apk` `bundle/v0.1.3`.
+
+### Changed
+
+- A profile with the default phone size, 360 x 800, no longer sets `WINAPK_PHONE_SIZE`; the
+  runtime uses that size by itself. `--dry-run` shows the phone size and whether it is sent.
+
 ## [0.1.2] - 2026-10-24
 
 ### Fixed
