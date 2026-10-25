@@ -5,6 +5,21 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-10-25
+
+### Fixed
+
+- Newer WhatsApp versions, such as 2.26.42.71, start again. They have an oversize constructor that
+  the bundled runtime's code converter used to replace with a method that throws, so the app
+  failed in `Application.onCreate` and its first screen never opened. The converter now splits
+  such a constructor into parts. Values that don't fit in a method's arguments are passed through
+  fields of the object being built. This is general, not specific to WhatsApp.
+- Apps whose code writes its own `final` fields outside their initializer no longer crash with
+  `IllegalAccessError`. Some obfuscated SDKs do this, for example one inside Bank Leumi's app.
+  The converter now clears `final` on exactly those fields.
+- Both fixes are in the bundled runtime, `5566brs/win.apk` `bundle/v0.1.4`, and are proposed
+  upstream to kksimp/dex2jvm.
+
 ## [0.1.3] - 2026-10-25
 
 ### Fixed
