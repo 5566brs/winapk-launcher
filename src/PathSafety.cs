@@ -346,9 +346,11 @@ internal static class PathSafety
         void Expect(string what, bool got, bool want) { if (got != want) failures.Add($"PathSafety {what}: got {got}, want {want}"); }
         void Same(string what, string? got, string? want) { if (got != want) failures.Add($"PathSafety {what}: got {got ?? "null"}, want {want ?? "null"}"); }
 
-        const string cyr = "C:\\Users\\\u041A\u0438\u0440\u0438\u043B\u043B\\AppData\\Local";   // Кирилл
-        const string heb = "C:\\Users\\\u05DE\u05E9\u05EA\u05DE\u05E9\\AppData\\Local";           // משתמש ("user")
-        Expect("ascii in 1252", Survives(@"C:\Users\user\AppData\Local", 1252), true);
+        // Sample profile paths on a placeholder drive: the release's leak check rejects any
+        // "C:\Users\" string in the binaries, even a made-up one.
+        const string cyr = "X:\\Profiles\\\u041A\u0438\u0440\u0438\u043B\u043B\\AppData\\Local";   // Кирилл
+        const string heb = "X:\\Profiles\\\u05DE\u05E9\u05EA\u05DE\u05E9\\AppData\\Local";           // משתמש ("user")
+        Expect("ascii in 1252", Survives(@"X:\Profiles\user\AppData\Local", 1252), true);
         Expect("Cyrillic in 1255", Survives(cyr, 1255), false);
         Expect("Cyrillic in 1251", Survives(cyr, 1251), true);
         Expect("Hebrew in 1255", Survives(heb, 1255), true);
