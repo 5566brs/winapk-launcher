@@ -813,8 +813,8 @@ public sealed class MainForm : Form
     private void ShowPathsNotice(Profile p)
     {
         if (!_pathsNoticeShown.Add(p.Id)) return;
-        var dlg = new LauncherDialog(AppInfo.ProductName, L.PathsNoticeHeading(p.Name, PathSafety.SafeRoot),
-            L.PathsNoticeBody, new[] { new DialogButton("ok", L.Ok, Accent: true) });
+        var dlg = new LauncherDialog(AppInfo.ProductName, L.PathsNoticeHeading(p.Name),
+            L.PathsNoticeBody(PathSafety.SafeRoot), new[] { new DialogButton("ok", L.Ok, Accent: true) });
         dlg.FormClosed += (_, _) => dlg.Dispose();
         dlg.Show(this);
     }

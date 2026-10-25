@@ -321,11 +321,11 @@ internal static class L
     public static string OpenLogsFolderTipSelected => T("Open the logs folder in Explorer, with this log selected",
         "פתח את תיקיית היומנים בסייר הקבצים, כשהיומן הזה מסומן");
 
-    public static string PathsNoticeHeading(string name, string root) =>
-        T($"{Iso(name)} runs from {Ltr(root)}.", $"האפליקציה {Q(name)} פועלת מתוך {Ltr(root)}.");
-    public static string PathsNoticeBody => T(
-        "Its folders have letters that Windows' \"Language for non-Unicode programs\" can't show, so the launcher uses plain-letter folders there. Nothing needs to be set.",
-        "בשמות התיקיות שלה יש אותיות שההגדרה \"שפה לתוכניות שאינן Unicode\" של Windows לא יכולה להציג, ולכן המפעיל משתמש שם בתיקיות עם אותיות פשוטות. אין צורך להגדיר דבר.");
+    public static string PathsNoticeHeading(string name) =>
+        T($"{Iso(name)} runs from plain-letter folders.", $"האפליקציה {Q(name)} פועלת מתיקיות עם אותיות פשוטות.");
+    public static string PathsNoticeBody(string root) => Ltr(root) + "\n" + T(
+        "Its folders have letters that Windows' \"Language for non-Unicode programs\" can't show, so the launcher uses folders here instead. Nothing needs to be set.",
+        "בשמות התיקיות שלה יש אותיות שההגדרה \"שפה לתוכניות שאינן Unicode\" של Windows לא יכולה להציג, ולכן המפעיל משתמש בתיקיות כאן במקומן. אין צורך להגדיר דבר.");
 
     public static string StillStartingTitle => T("Still starting", "עדיין מתחילה");
     public static string StillStartingHeading(string name) => T($"{Iso(name)} is still starting.", $"האפליקציה {Q(name)} עדיין מתחילה.");
