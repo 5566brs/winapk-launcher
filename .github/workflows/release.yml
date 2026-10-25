@@ -102,6 +102,7 @@ jobs:
             clang:p
             cmake:p
             ninja:p
+            zlib:p
 
       - name: Build the runtime
         working-directory: winapk
