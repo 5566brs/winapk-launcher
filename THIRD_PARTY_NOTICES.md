@@ -33,6 +33,7 @@ The runtime folder in turn bundles:
 | ANGLE (`libEGL.dll`, `libGLESv2.dll`), Chromium's build as shipped in Electron v33.4.11 | `runtime\bin\` | BSD-3-Clause |
 | SwiftShader (`vk_swiftshader.dll`) and the Vulkan loader (`vulkan-1.dll`), from the same Electron build | `runtime\bin\` | Apache-2.0 |
 | `d3dcompiler_47.dll`, Microsoft's Direct3D shader compiler as redistributed with Chromium/Electron | `runtime\bin\` | Microsoft redistributable |
+| `WebView2Loader.dll`, the redistributable loader of Microsoft's WebView2 SDK 1.0.4314.35 (it finds the WebView2 Runtime installed on the PC, which is not bundled) | `runtime\bin\` | BSD-3-Clause; the license text is in `runtime\bin\licenses\WebView2-SDK-LICENSE.txt` |
 | Android platform resources (`framework-res.apk`), compiled from AOSP `frameworks/base/core/res` (android-16.0.0_r2) | `runtime\bin\tools\` | Apache-2.0 |
 | [Bouncy Castle](https://www.bouncycastle.org/) `bcprov-jdk18on-1.79.jar` | `runtime\lib\` | Bouncy Castle License (MIT-style) |
 | [SQLite](https://sqlite.org/) 3.54.1, linked into `winapk-runtime.exe` | `runtime\bin\` | Public domain |
