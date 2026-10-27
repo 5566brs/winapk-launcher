@@ -5,6 +5,49 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-10-27
+
+### Added
+
+- Web pages that an app opens for sign-in or security checks (Android Custom Tabs) now open in a
+  window over the app, using Microsoft Edge WebView2, and the app's return link goes back to the
+  app. Spotify's sign-in now completes. Apps that show web content in their own screens
+  (`android.webkit.WebView`) use WebView2 too. Each app keeps its own WebView2 profile in its data
+  folder. Without the WebView2 Runtime, links open in the system browser as before.
+
+### Fixed
+
+- After an update, an app's code is converted again when the bundled converter or the app has
+  changed. Before, a copy converted by an older runtime could be reused, and the app then failed
+  to start. The first start of each app after this update takes longer, once.
+- Spotify works after sign-in. These fixes are in the runtime and apply to any app that hits the
+  same cases:
+  - Date patterns with ICU-only letters, such as `VV` for the time zone, no longer throw.
+  - `getcwd()` returns an Android-style path, so native code that treats paths not starting with
+    `/` as relative no longer recurses until the stack runs out.
+  - `Resources.getFloat()` returns the resource's value instead of 0. Spotify's main screen was
+    black because of it.
+  - The runtime no longer starts a view's lifecycle before the app does.
+  - SQLite waits up to 2.5 seconds for a locked database, as Android does, instead of failing at
+    once.
+  - A view that an app adds to its window's decor, such as a bottom sheet, now floats over the
+    content. Before, it could end up invisible while still catching every tap, so the app stopped
+    responding.
+  - Positions inside Jetpack Compose screens are measured from the window, so popups land next to
+    the views they point at.
+  - An app bar no longer gets a 56 dp minimum height that Android doesn't give it.
+- Less work on the UI thread in apps whose AndroidX class names are obfuscated.
+
+### Known issues
+
+- Spotify's profile page doesn't work fully yet.
+- Telegram has no sound yet (voice messages, calls): OpenSL ES audio is not implemented.
+- WhatsApp may refuse to send a registration code to a new number. Its server relies on Google
+  Play integrity checks, which this runtime can't pass. A number already registered on a phone can
+  be moved to the runtime.
+
+The bundled runtime is `5566brs/win.apk` `bundle/v0.1.6`.
+
 ## [0.1.5] - 2026-10-25
 
 ### Fixed
