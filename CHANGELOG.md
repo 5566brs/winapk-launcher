@@ -5,6 +5,31 @@ All notable changes to WinApk Launcher are listed in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-08
+
+### Fixed
+
+- An app's proxy now also carries the connections that the app's own native code opens. Before,
+  only the app's Java code used it. WhatsApp opens its chat connection from native code, so the
+  chat went straight to the network and couldn't connect where WhatsApp is blocked. Now the chat
+  connects through the proxy.
+  - Connections to this computer and to the local network still go direct.
+  - A socket that the app binds to one local address also goes direct.
+  - A connection that the proxy can't carry fails rather than going around it.
+- IPv6 sockets accept IPv4 addresses too, as on Android.
+
+### Known issues
+
+- Voice and video calls (UDP) don't go through the app's proxy.
+- The proxy gets the address that the app looked up on this computer, not the host name.
+- Spotify's profile page doesn't work fully yet.
+- Telegram has no sound yet (voice messages, calls): OpenSL ES audio is not implemented.
+- WhatsApp may refuse to send a registration code to a new number. Its server relies on Google
+  Play integrity checks, which this runtime can't pass. A number already registered on a phone can
+  be moved to the runtime.
+
+The bundled runtime is `5566brs/win.apk` `bundle/v0.1.7`.
+
 ## [0.1.6] - 2026-10-27
 
 ### Added
